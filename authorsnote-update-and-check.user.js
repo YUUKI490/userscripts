@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         AIのべりすと 最後のブロックで脚注を更新＋校正
 // @namespace    https://ai-novel.com/
-// @version      1.1.0
+// @version      1.2.0
 // @description  今の脚注を最後のブロックで更新し、脚注チェック係で校正して、確認画面で選んだ修正を反映してから脚注欄に貼り付けます
 // @match        https://ai-novel.com/*
 // @grant        none
@@ -111,7 +111,9 @@
     return '';
   }
 
-  async function runBot(i) {
+  // tempText を渡すと、実行ボタンを押す一瞬だけプロンプトを差し替えて、押した直後に元へ戻す
+  // （変更イベントを出さないので、差し替えた中身が保存されない）
+  async function runBot(i, promptEl, tempText) {
     const out = document.getElementById('petitbot_output_assistant');
     const info = document.getElementById('petitbot_output_info');
     const area = document.getElementById('petitbotarea' + i);
@@ -120,7 +122,13 @@
 
     const beforeInfo = info ? info.textContent : '';
     const beforeVal = out.value;
-    execBtn.click();
+    if (promptEl && tempText != null) {
+      const orig = promptEl.value;
+      promptEl.value = tempText;
+      try { execBtn.click(); } finally { promptEl.value = orig; }
+    } else {
+      execBtn.click();
+    }
 
     // 出力が始まるまで待つ
     const start = Date.now();
@@ -289,11 +297,10 @@
 
       setStatus('脚注を更新中…');
       const upOriginal = upPromptEl.value;
-      upPromptEl.value = upOriginal.replace(PH_START, startText).replace(PH_AN, anEl.value.trim() || EMPTY_AN);
-      fireInput(upPromptEl);
+      const upFilled = upOriginal.replace(PH_START, startText).replace(PH_AN, anEl.value.trim() || EMPTY_AN);
       let draft;
       try {
-        draft = await runBot(anIdx);
+        draft = await runBot(anIdx, upPromptEl, upFilled);
       } finally {
         upPromptEl.value = upOriginal;
         fireInput(upPromptEl);
@@ -303,11 +310,10 @@
 
       setStatus('脚注を校正中…');
       originalPrompt = promptEl.value;
-      promptEl.value = originalPrompt.replace(PLACEHOLDER, draft);
-      fireInput(promptEl);
+      const filled = originalPrompt.replace(PLACEHOLDER, draft);
       let checkResult;
       try {
-        checkResult = await runBot(checkIdx);
+        checkResult = await runBot(checkIdx, promptEl, filled);
       } finally {
         promptEl.value = originalPrompt;
         fireInput(promptEl);

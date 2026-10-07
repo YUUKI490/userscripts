@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         AIのべりすと 指示清書（プチボット）
 // @namespace    https://ai-novel.com/
-// @version      1.1.0
+// @version      1.2.0
 // @description  入力欄に書いたざっくりした作成指示をプチボット（指示清書係）で清書し、入力欄に書き戻します。送信はしません
 // @match        https://ai-novel.com/*
 // @grant        none
@@ -81,7 +81,9 @@
     return -1;
   }
 
-  async function runBot(i) {
+  // tempText を渡すと、実行ボタンを押す一瞬だけプロンプトを差し替えて、押した直後に元へ戻す
+  // （変更イベントを出さないので、差し替えた中身が保存されない）
+  async function runBot(i, promptEl, tempText) {
     const out = document.getElementById('petitbot_output_assistant');
     const info = document.getElementById('petitbot_output_info');
     const area = document.getElementById('petitbotarea' + i);
@@ -90,7 +92,13 @@
 
     const beforeInfo = info ? info.textContent : '';
     const beforeVal = out.value;
-    execBtn.click();
+    if (promptEl && tempText != null) {
+      const orig = promptEl.value;
+      promptEl.value = tempText;
+      try { execBtn.click(); } finally { promptEl.value = orig; }
+    } else {
+      execBtn.click();
+    }
 
     const start = Date.now();
     while (true) {
@@ -143,12 +151,11 @@
 
       setStatus('指示を清書中…');
       originalPrompt = promptEl.value;
-      promptEl.value = originalPrompt.replace(PLACEHOLDER, instruction);
-      fireInput(promptEl);
+      const filled = originalPrompt.replace(PLACEHOLDER, instruction);
 
       let result;
       try {
-        result = await runBot(idx);
+        result = await runBot(idx, promptEl, filled);
       } finally {
         promptEl.value = originalPrompt;
         fireInput(promptEl);
