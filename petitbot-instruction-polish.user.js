@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         AIのべりすと 指示清書（プチボット）
 // @namespace    https://ai-novel.com/
-// @version      1.2.0
+// @version      1.3.0
 // @description  入力欄に書いたざっくりした作成指示をプチボット（指示清書係）で清書し、入力欄に書き戻します。送信はしません
 // @match        https://ai-novel.com/*
 // @grant        none
@@ -86,16 +86,25 @@
   async function runBot(i, promptEl, tempText) {
     const out = document.getElementById('petitbot_output_assistant');
     const info = document.getElementById('petitbot_output_info');
+    if (!out) throw new Error('プチボットの出力欄が見つかりません');
+
+    // 前のプチボットの処理が落ち着くまで少し待ち、実行ボタンが押せる状態になるのを待つ
+    await sleep(1500);
     const area = document.getElementById('petitbotarea' + i);
     const execBtn = area && area.querySelector('.btn-petitbot-chat');
-    if (!out || !execBtn) throw new Error('プチボットの実行ボタンか出力欄が見つかりません');
-
+    if (!execBtn) throw new Error('プチボットの実行ボタンが見つかりません');
+    const waitStart = Date.now();
+    while (execBtn.disabled || execBtn.getAttribute('aria-disabled') === 'true') {
+      if (Date.now() - waitStart > 30000) throw new Error('プチボットの実行ボタンが押せる状態になりません');
+      await sleep(500);
+    }
     const beforeInfo = info ? info.textContent : '';
     const beforeVal = out.value;
-    if (promptEl && tempText != null) {
-      const orig = promptEl.value;
-      promptEl.value = tempText;
-      try { execBtn.click(); } finally { promptEl.value = orig; }
+    const livePrompt = document.getElementById('petitbot_prompt' + i) || promptEl;
+    if (livePrompt && tempText != null) {
+      const orig = livePrompt.value;
+      livePrompt.value = tempText;
+      try { execBtn.click(); } finally { livePrompt.value = orig; }
     } else {
       execBtn.click();
     }
@@ -158,8 +167,6 @@
         result = await runBot(idx, promptEl, filled);
       } finally {
         promptEl.value = originalPrompt;
-        fireInput(promptEl);
-        persistPetitbots();
         originalPrompt = null;
       }
       if (!result) throw new Error('清書の結果が空でした');
@@ -172,8 +179,6 @@
     } finally {
       if (originalPrompt !== null && promptEl) {
         promptEl.value = originalPrompt;
-        fireInput(promptEl);
-        persistPetitbots();
       }
       if (btn) btn.disabled = false;
       running = false;
