@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         AIのべりすと 本文のみ表示
 // @namespace    https://ai-novel.com/
-// @version      1.1.0
-// @description  切り替えボタンで、ヘッダー・サイドメニュー・入力欄などを隠して本文の欄だけを表示します。本文のみ表示のときは「最後のブロックで脚注を更新して校正する」ボタンも出します
+// @version      1.2.0
+// @description  切り替えボタンで、ヘッダー・サイドメニュー・入力欄などを隠して本文の欄だけを表示します。本文のみ表示のときは「最後のブロックで脚注を更新する」ボタンも出します
 // @match        https://ai-novel.com/*
 // @grant        none
 // @run-at       document-idle
@@ -17,9 +17,9 @@
   const UC_MSG_ID = 'nvbo-uc-msg';
   const STYLE_ID = 'nvbo-style';
 
-  // 「最後のブロックで脚注を更新＋校正」スクリプトのボタンとメッセージ
-  const TARGET_BTN_ID = 'anuc-btn';
-  const TARGET_MSG_ID = 'anuc-msg';
+  // 「最後のブロックで脚注を更新」スクリプトのボタンとメッセージ
+  const TARGET_BTN_ID = 'anul-btn';
+  const TARGET_MSG_ID = 'anul-msg';
 
   // 本文のみ表示のときに隠すもの
   const HIDE_SELECTORS = [
@@ -72,7 +72,7 @@
     const msg = document.getElementById(UC_MSG_ID);
     if (!target) {
       if (msg) {
-        msg.textContent = '「最後のブロックで脚注を更新＋校正」のスクリプトが見つかりません';
+        msg.textContent = '「最後のブロックで脚注を更新」のスクリプトが見つかりません';
         msg.style.color = '#cc0000';
         msg.classList.add('has-text');
       }
@@ -111,7 +111,7 @@
       ub.type = 'button';
       ub.id = UC_BTN_ID;
       ub.textContent = '🔄';
-      ub.title = '最後のブロックで脚注を更新して校正する';
+      ub.title = '最後のブロックで脚注を更新する';
       ub.addEventListener('click', runUpdateAndCheck);
       document.body.appendChild(ub);
 
