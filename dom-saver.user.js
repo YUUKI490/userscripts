@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DOM保存ボタン
 // @namespace    https://github.com/YUUKI490/userscripts
-// @version      1.0.0
+// @version      1.1.0
 // @description  今表示しているページのHTML（DOM）をテキストファイルに保存するボタンを出す
 // @match        *://*/*
 // @grant        none
@@ -64,7 +64,7 @@
   const btn = document.createElement('button');
   btn.id = BTN_ID;
   btn.type = 'button';
-  btn.textContent = 'DOM保存';
+  btn.textContent = 'DOM保存 v1.1';
   Object.assign(btn.style, {
     position: 'fixed',
     left: '8px',
