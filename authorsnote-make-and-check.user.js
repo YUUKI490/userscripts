@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         AIのべりすと 脚注作成＋校正
 // @namespace    https://ai-novel.com/
-// @version      1.0.0
+// @version      1.1.0
 // @description  脚注まとめ係のプチボットで脚注を作り、脚注チェック係で校正して、確認画面で選んだ修正を反映してから脚注欄に貼り付けます
 // @match        https://ai-novel.com/*
 // @grant        none
@@ -40,6 +40,33 @@
   function fireInput(el) {
     el.dispatchEvent(new Event('input', { bubbles: true }));
     el.dispatchEvent(new Event('change', { bubbles: true }));
+  }
+
+  // プチボットの保存処理を呼ぶ（リモート保存のときも元のプロンプトが保存されるように）
+  function persistPetitbots() {
+    try {
+      if (typeof window.HandlePetitbotEditorPersist === 'function') window.HandlePetitbotEditorPersist(true);
+      else if (typeof window.PersistPetitbotCurrentMode === 'function') window.PersistPetitbotCurrentMode();
+    } catch (e) { /* 何もしない */ }
+  }
+
+  // 目印がそろっているプロンプトを控えておき、目印が消えていたら控えから戻す
+  function ensureTemplate(promptEl, botName, marks) {
+    const key = 'ainovel-petitbot-template:' + botName;
+    const ok = (s) => marks.every((m) => s.includes(m));
+    if (ok(promptEl.value)) {
+      try { localStorage.setItem(key, promptEl.value); } catch (e) { /* 何もしない */ }
+      return true;
+    }
+    let saved = null;
+    try { saved = localStorage.getItem(key); } catch (e) { /* 何もしない */ }
+    if (saved && ok(saved)) {
+      promptEl.value = saved;
+      fireInput(promptEl);
+      persistPetitbots();
+      return true;
+    }
+    return false;
   }
 
   function getBotName(i) {
@@ -225,7 +252,7 @@
         throw new Error('2つのプチボットの出力先を「プチボット専用欄」にしてください');
       }
       const promptEl = document.getElementById('petitbot_prompt' + checkIdx);
-      if (!promptEl || !promptEl.value.includes(PLACEHOLDER)) {
+      if (!promptEl || !ensureTemplate(promptEl, getBotName(checkIdx), [PLACEHOLDER])) {
         throw new Error('脚注チェック係のプロンプトに「' + PLACEHOLDER + '」がありません');
       }
 
@@ -243,6 +270,7 @@
       } finally {
         promptEl.value = originalPrompt;
         fireInput(promptEl);
+        persistPetitbots();
         originalPrompt = null;
       }
 
@@ -260,7 +288,7 @@
     } finally {
       if (originalPrompt !== null && checkIdx >= 0) {
         const promptEl = document.getElementById('petitbot_prompt' + checkIdx);
-        if (promptEl) { promptEl.value = originalPrompt; fireInput(promptEl); }
+        if (promptEl) { promptEl.value = originalPrompt; fireInput(promptEl); persistPetitbots(); }
       }
       if (btn) btn.disabled = false;
       running = false;

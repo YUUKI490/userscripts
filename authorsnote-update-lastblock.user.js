@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         AIのべりすと 最後のブロックで脚注を更新
 // @namespace    https://ai-novel.com/
-// @version      1.0.0
+// @version      1.1.0
 // @description  今の脚注と本文の最後のブロックの書き出しをプチボット（脚注更新係）に渡して、更新した脚注を脚注欄に貼り付けます
 // @match        https://ai-novel.com/*
 // @grant        none
@@ -43,6 +43,33 @@
   function fireInput(el) {
     el.dispatchEvent(new Event('input', { bubbles: true }));
     el.dispatchEvent(new Event('change', { bubbles: true }));
+  }
+
+  // プチボットの保存処理を呼ぶ（リモート保存のときも元のプロンプトが保存されるように）
+  function persistPetitbots() {
+    try {
+      if (typeof window.HandlePetitbotEditorPersist === 'function') window.HandlePetitbotEditorPersist(true);
+      else if (typeof window.PersistPetitbotCurrentMode === 'function') window.PersistPetitbotCurrentMode();
+    } catch (e) { /* 何もしない */ }
+  }
+
+  // 目印がそろっているプロンプトを控えておき、目印が消えていたら控えから戻す
+  function ensureTemplate(promptEl, botName, marks) {
+    const key = 'ainovel-petitbot-template:' + botName;
+    const ok = (s) => marks.every((m) => s.includes(m));
+    if (ok(promptEl.value)) {
+      try { localStorage.setItem(key, promptEl.value); } catch (e) { /* 何もしない */ }
+      return true;
+    }
+    let saved = null;
+    try { saved = localStorage.getItem(key); } catch (e) { /* 何もしない */ }
+    if (saved && ok(saved)) {
+      promptEl.value = saved;
+      fireInput(promptEl);
+      persistPetitbots();
+      return true;
+    }
+    return false;
   }
 
   function getBotName(i) {
@@ -136,7 +163,7 @@
         throw new Error('プチボットの出力先を「プチボット専用欄」にしてください');
       }
       promptEl = document.getElementById('petitbot_prompt' + idx);
-      if (!promptEl || !promptEl.value.includes(PH_AN) || !promptEl.value.includes(PH_START)) {
+      if (!promptEl || !ensureTemplate(promptEl, getBotName(idx), [PH_AN, PH_START])) {
         throw new Error('プロンプトに目印（' + PH_AN + '／' + PH_START + '）がありません');
       }
       const an = document.getElementById('authorsnote');
@@ -157,6 +184,7 @@
       } finally {
         promptEl.value = originalPrompt;
         fireInput(promptEl);
+        persistPetitbots();
         originalPrompt = null;
       }
       if (!result) throw new Error('更新結果が空でした');
@@ -169,6 +197,7 @@
       if (originalPrompt !== null && promptEl) {
         promptEl.value = originalPrompt;
         fireInput(promptEl);
+        persistPetitbots();
       }
       if (btn) btn.disabled = false;
       running = false;
