@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         AIのべりすと 最後のブロックで脚注を更新
 // @namespace    https://ai-novel.com/
-// @version      1.3.0
+// @version      1.4.0
 // @description  今の脚注と本文の最後のブロックの書き出しをプチボット（脚注更新係）に渡して、更新した脚注を脚注欄に貼り付けます
 // @match        https://ai-novel.com/*
 // @grant        none
@@ -145,6 +145,9 @@
       if (out.value !== last) {
         last = out.value;
         lastChange = Date.now();
+      } else if (info) {
+        // 出力情報から「生成中」が消え、出力が少し止まったら完了
+        if (!info.textContent.includes('生成中') && info.textContent !== beforeInfo && Date.now() - lastChange >= 1500) break;
       } else if (last.trim() && Date.now() - lastChange >= STABLE_MS) {
         break;
       }

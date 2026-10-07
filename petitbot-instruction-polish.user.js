@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         AIのべりすと 指示清書（プチボット）
 // @namespace    https://ai-novel.com/
-// @version      1.3.0
+// @version      1.4.0
 // @description  入力欄に書いたざっくりした作成指示をプチボット（指示清書係）で清書し、入力欄に書き戻します。送信はしません
 // @match        https://ai-novel.com/*
 // @grant        none
@@ -124,6 +124,9 @@
       if (out.value !== last) {
         last = out.value;
         lastChange = Date.now();
+      } else if (info) {
+        // 出力情報から「生成中」が消え、出力が少し止まったら完了
+        if (!info.textContent.includes('生成中') && info.textContent !== beforeInfo && Date.now() - lastChange >= 1500) break;
       } else if (last.trim() && Date.now() - lastChange >= STABLE_MS) {
         break;
       }
