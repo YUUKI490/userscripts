@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Claude 大きい入力画面（辞書つき）
 // @namespace    local.claude.bigcompose
-// @version      1.2.3
+// @version      1.3.0
 // @description  ✏️ボタンで画面いっぱいの入力画面を開き、辞書から名前を貼り付けながら書いてそのままClaudeに送信できます。横画面のときは元の入力欄を隠します
 // @match        https://claude.ai/*
 // @grant        GM_getValue
@@ -20,15 +20,15 @@
 
         /*
          * ✏️ボタンの位置（縦向きのとき）
-         * 左下の🔝ボタン（下から198px）の上に置いています。
+         * 左下の角に置いています（右下の☰ボタンと左右対称）。
          */
-        portrait: { left: '12px', right: '', bottom: '250px' },
+        portrait: { left: '12px', right: '', bottom: 'calc(12px + env(safe-area-inset-bottom, 0px))' },
 
         /*
          * ✏️ボタンの位置（横向きのとき）
-         * 右下の📖ボタン（下から94px）の下に置いています。
+         * 縦向きと同じ、左下の角です。
          */
-        landscape: { left: '', right: '12px', bottom: '42px' },
+        landscape: { left: '12px', right: '', bottom: 'calc(12px + env(safe-area-inset-bottom, 0px))' },
 
         /*
          * true … 縦向きのときも✏️ボタンを出す
