@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Claude 大きい入力画面（辞書つき）
 // @namespace    local.claude.bigcompose
-// @version      1.2.0
+// @version      1.2.1
 // @description  ✏️ボタンで画面いっぱいの入力画面を開き、辞書から名前を貼り付けながら書いてそのままClaudeに送信できます。横画面のときは元の入力欄を隠します
 // @match        https://claude.ai/*
 // @grant        GM_getValue
@@ -910,9 +910,9 @@
             const item = el('button', {
                 display: 'block',
                 width: '100%',
-                minHeight: '46px',
+                minHeight: '62px',
                 textAlign: 'left',
-                padding: '9px 11px',
+                padding: '12px 14px',
                 border: '1px solid #ccc',
                 borderRadius: '8px',
                 background: '#f7f7f7',
@@ -922,14 +922,14 @@
 
             item.type = 'button';
 
-            item.append(el('div', { fontSize: '15px', fontWeight: 'bold' }, entry.name));
+            item.append(el('div', { fontSize: '18px', fontWeight: 'bold' }, entry.name));
 
             if (entry.note) {
                 item.append(el('div', {
-                    marginTop: '2px',
-                    fontSize: '12px',
-                    color: '#777',
-                    lineHeight: '1.4'
+                    marginTop: '4px',
+                    fontSize: '14px',
+                    color: '#666',
+                    lineHeight: '1.5'
                 }, entry.note));
             }
 
