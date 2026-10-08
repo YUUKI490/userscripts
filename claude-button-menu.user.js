@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Claude ボタンまとめメニュー
 // @namespace    claude-button-menu
-// @version      1.4.0
+// @version      1.5.0
 // @description  claude.aiに並んでいる各ユーザースクリプトのボタンを右下の1つにまとめます。押すと一覧が出て、選んだ機能を呼び出します
 // @match        https://claude.ai/*
 // @grant        none
@@ -160,6 +160,13 @@
             -webkit-touch-callout: none !important;
             touch-action: manipulation !important;
             cursor: pointer !important;
+            transition: opacity .25s !important;
+        }
+
+        /* スクロール中は☰を透明にする（メニューを開いている間はそのまま） */
+        html.cbm-scrolling #${BUTTON_ID}:not(.cbm-open) {
+            opacity: 0 !important;
+            pointer-events: none !important;
         }
 
         #${BUTTON_ID}:active,
@@ -500,6 +507,77 @@
         closeMenu();
 
     }, true);
+
+
+    // =========================================================
+    // スクロール中はボタンを透明にする
+    // =========================================================
+    //
+    // 指でスクロールしている間（はじいた後の惰性スクロールも）はボタンを透明にして、
+    // 止まってから少したったら元に戻します。
+    // Claudeが生成中に自動でスクロールするときは透明にしません。
+
+    const SCROLL_HIDE = {
+        /* 止まってから出てくるまでの時間(ms) */
+        showDelay: 800,
+        /* 指を離してからこの時間(ms)までのスクロールは「指で動かした」あつかい */
+        flingTime: 2500
+    };
+
+    const SCROLLING_CLASS = 'cbm-scrolling';
+
+    let cbmTouching = false;
+    let cbmLastTouch = 0;
+    let cbmShowTimer = null;
+
+    function cbmMarkTouch() {
+        cbmLastTouch = Date.now();
+    }
+
+    document.addEventListener('touchstart', function () {
+        cbmTouching = true;
+        cbmMarkTouch();
+    }, { capture: true, passive: true });
+
+    document.addEventListener('touchend', function () {
+        cbmTouching = false;
+        cbmMarkTouch();
+    }, { capture: true, passive: true });
+
+    document.addEventListener('touchcancel', function () {
+        cbmTouching = false;
+        cbmMarkTouch();
+    }, { capture: true, passive: true });
+
+    /* PCのマウスホイール */
+    document.addEventListener('wheel', cbmMarkTouch, { capture: true, passive: true });
+
+    document.addEventListener('scroll', function (event) {
+
+        const target = event.target;
+
+        /* ボタン自身のメニューなどの中のスクロールでは隠さない */
+        if (
+            target &&
+            target.closest &&
+            target.closest('#cbm-menu')
+        ) {
+            return;
+        }
+
+        if (!cbmTouching && Date.now() - cbmLastTouch > SCROLL_HIDE.flingTime) {
+            return;
+        }
+
+        document.documentElement.classList.add(SCROLLING_CLASS);
+
+        clearTimeout(cbmShowTimer);
+
+        cbmShowTimer = setTimeout(function () {
+            document.documentElement.classList.remove(SCROLLING_CLASS);
+        }, SCROLL_HIDE.showDelay);
+
+    }, { capture: true, passive: true });
 
 
     // =========================================================
