@@ -928,7 +928,7 @@
                 item.append(el('div', {
                     marginTop: '4px',
                     fontSize: '14px',
-                    color: '#666',
+                    color: '#777',
                     lineHeight: '1.5'
                 }, entry.note));
             }
