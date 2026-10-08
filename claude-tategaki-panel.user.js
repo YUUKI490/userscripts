@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Claude 縦書き表示パネル
 // @namespace    claude-tategaki-panel
-// @version      2.10.0
+// @version      2.11.0
 // @description  claude.aiの会話（あなたのメッセージとClaudeの返事）を全部、縦書きにして画面にかぶせて表示します。生成中もリアルタイムで流れます。キャラ画像スクリプトの顔もセリフの頭に表示します。画面左の「縦／横」ボタンでオン・オフでき、状態は覚えておきます。会話の全文はclaude.aiから直接取得するので、長い会話でも抜けずに最初から表示します（非公式の内部APIを使用）
 // @match        https://claude.ai/*
 // @grant        none
@@ -127,8 +127,14 @@
      */
     const USER_SELECTOR = '[data-testid="user-message"]';
 
+    /*
+     * Claudeの返事は、今の画面では「生成中かどうか」の目印
+     * （data-is-streaming）がついた入れ物に入っています。
+     * 前の画面の作り（font-claude-response など）にも対応しておきます
+     */
     const MESSAGE_SELECTORS = [
         USER_SELECTOR,
+        '[data-is-streaming]',
         '.font-claude-response',
         '.font-claude-message'
     ].join(', ');
