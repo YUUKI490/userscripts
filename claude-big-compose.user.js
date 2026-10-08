@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Claude 大きい入力画面（辞書つき）
 // @namespace    local.claude.bigcompose
-// @version      1.2.2
+// @version      1.2.3
 // @description  ✏️ボタンで画面いっぱいの入力画面を開き、辞書から名前を貼り付けながら書いてそのままClaudeに送信できます。横画面のときは元の入力欄を隠します
 // @match        https://claude.ai/*
 // @grant        GM_getValue
@@ -896,6 +896,7 @@
             WebkitOverflowScrolling: 'touch',
             display: 'grid',
             gridTemplateColumns: '1fr',  // 1人1行（縦1列）
+            gridAutoRows: 'max-content', // 中身に合わせた高さにする（説明文が隠れないように）
             alignContent: 'start',
             gap: '6px'
         });
@@ -918,7 +919,6 @@
                 background: '#f7f7f7',
                 color: '#222',
                 whiteSpace: 'normal',
-                overflow: 'hidden',
                 touchAction: 'manipulation'
             });
 
