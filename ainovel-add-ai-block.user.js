@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         AIのべりすと AIブロック追加
 // @namespace    yuuki490-ainovel
-// @version      2.0
-// @description  ツールパレットのボタンで入力パネルを開き、ユーザーブロック＋AIブロック（書き出し入り）を作って「続ける」を押す
+// @version      2.1
+// @description  画面の仮ボタン（➕）で入力パネルを開き、ユーザーブロック＋AIブロック（書き出し入り）を作って「続ける」を押す
 // @match        https://ai-novel.com/*
 // @grant        none
 // @run-at       document-idle
@@ -224,29 +224,26 @@
     }, 500);
   }
 
-  /* ---------- ツールパレットのボタン ---------- */
-  function makeButton() {
+  /* ---------- 仮ボタン（パレットを作り直すまでの間） ---------- */
+  const tmpStyle = document.createElement('style');
+  tmpStyle.textContent = `
+    #${BTN_ID} { position:fixed; left:8px; bottom:120px; z-index:99980; width:48px; height:48px; border-radius:50%; border:1px solid #000; background:rgb(205,43,90); color:#fff; font-size:24px; line-height:1; padding:0; cursor:pointer; box-shadow:0 2px 8px rgba(0,0,0,.4); opacity:.85; }
+  `;
+  document.head.appendChild(tmpStyle);
+
+  function ensureButton() {
+    if (!document.getElementById('data_container') || document.getElementById(BTN_ID)) return;
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.id = BTN_ID;
-    btn.className = 'ainovel-tool-palette-button';
-    btn.dataset.tool = 'addAiBlock';
     btn.title = 'ユーザー＋AIブロック追加';
-    btn.innerHTML =
-      '<span class="ainovel-tool-palette-icon">➕</span>' +
-      '<span class="ainovel-tool-palette-label">ユーザー＋AI追加</span>';
+    btn.textContent = '➕';
     btn.addEventListener('click', (e) => {
       e.preventDefault();
       e.stopPropagation();
       openPanel();
     });
-    return btn;
-  }
-
-  function ensureButton() {
-    const palette = document.getElementById('ainovel-tool-palette');
-    if (!palette || document.getElementById(BTN_ID)) return;
-    palette.appendChild(makeButton());
+    document.body.appendChild(btn);
   }
 
   ensureButton();
