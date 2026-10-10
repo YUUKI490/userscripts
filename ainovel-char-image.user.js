@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         AIのべりすと キャラ画像
 // @namespace    yuuki490-ainovel
-// @version      1.1
+// @version      1.2
 // @description  縦書き表示のパネルで、セリフの頭にキャラの顔画像を表示し、括弧の前の名前は画像の上に移す。洗脳中のキャラは「名前_洗脳」の画像に差し替える。画像の登録は画面の仮ボタン（顔）から。前のキャラ画像スクリプトで登録した画像と対応表をそのまま使う
 // @match        https://ai-novel.com/*
 // @grant        none
@@ -231,6 +231,27 @@
     return Math.max(8, Math.min(12, Math.floor((iconSize * 1.8) / len)));
   }
 
+  // 顔や名前がセリフの列より幅広いときは、セリフの行の左右に余白をとって、となりの行に重ならないようにする
+  function fitFaceLines(scroller) {
+    scroller.querySelectorAll('.tg-line').forEach((line) => {
+      const img = line.querySelector('.' + FACE_CLASS);
+      if (!img) {
+        line.style.removeProperty('margin-left');
+        line.style.removeProperty('margin-right');
+        return;
+      }
+      line.style.removeProperty('margin-left');
+      line.style.removeProperty('margin-right');
+      const label = line.querySelector('.' + NAME_CLASS);
+      const need = Math.max(iconSize, label ? label.offsetWidth : 0);
+      const extra = Math.ceil((need - line.offsetWidth) / 2) + 2;
+      if (extra > 0) {
+        line.style.setProperty('margin-left', extra + 'px', 'important');
+        line.style.setProperty('margin-right', extra + 'px', 'important');
+      }
+    });
+  }
+
   async function applyFaces() {
     const scroller = document.getElementById(SCROLLER_ID);
     if (!scroller) return;
@@ -276,6 +297,7 @@
         }
       }
       scroller.classList.toggle(ON_CLASS, !!scroller.querySelector('.' + FACE_CLASS));
+      fitFaceLines(scroller);
 
       if (atEnd) requestAnimationFrame(() => { scroller.scrollLeft = -max(); });
     } finally {
