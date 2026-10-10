@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         AIのべりすと 生成後の自動処理
 // @namespace    yuuki490-ainovel
-// @version      1.0
+// @version      1.1
 // @description  生成完了時、途中で切れていれば「続ける」を押す。ちゃんと終わっていれば脚注まとめ係のプチボットを動かし、脚注の差し替えと洗脳状態の保存を行う
 // @match        https://ai-novel.com/*
 // @grant        none
@@ -26,6 +26,9 @@
   const BOT_TIMEOUT = 180000;
   // 脚注の最大文字数
   const AN_MAX = 6000;
+  // 生成完了後、本文の最後のブロックが落ち着くまで待つ時間（ミリ秒）
+  const SETTLE_MS = 1200;
+  const SETTLE_TIMEOUT = 10000;
 
   const CONTINUE_SELECTOR = '#getcontinuation_chat';
   const LOADING_ID = 'loading_anim';
@@ -40,6 +43,7 @@
   let autoCount = 0;
   let busy = false;            // プチボット処理中
   let ignoreUntilIdle = false; // プチボット処理直後、くるくるが消えるまで生成完了を無視する
+  let settling = false;        // 生成完了後、本文が落ち着くのを待っている
 
   /* ===================== 小物 ===================== */
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -102,9 +106,35 @@
     return chars.length ? chars[chars.length - 1] : '';
   }
 
-  function onFinished() {
-    const info = getLastBlockInfo();
-    if (!info || !info.isAssistant || !info.text) { autoCount = 0; return; }
+  // 生成が終わった直後は、AIのブロックがまだ本文に入っていないことがあるので、
+  // 最後のブロックがAIのブロックになり、中身の変化が止まるまで待つ
+  async function waitSettled() {
+    const start = Date.now();
+    let prev = null;
+    let stableSince = Date.now();
+    let info = null;
+    while (Date.now() - start < SETTLE_TIMEOUT) {
+      await sleep(300);
+      if (isGenerating()) return null; // 次の生成が始まった
+      info = getLastBlockInfo();
+      const sig = info ? (info.isAssistant ? 'A' : 'X') + info.text : '';
+      if (sig !== prev) {
+        prev = sig;
+        stableSince = Date.now();
+      } else if (info && info.isAssistant && info.text && Date.now() - stableSince >= SETTLE_MS) {
+        return info;
+      }
+    }
+    console.log('[生成後の自動処理] 本文の最後がAIのブロックにならなかったので何もしないよ');
+    return null;
+  }
+
+  async function onFinished() {
+    if (settling) return;
+    settling = true;
+    let info;
+    try { info = await waitSettled(); } finally { settling = false; }
+    if (!info) { autoCount = 0; return; }
 
     const c = lastChar(info.text);
     const complete = END_CHARS.includes(c);
@@ -126,7 +156,7 @@
 
     // ちゃんと終わった（または続けるのをあきらめた）→ 脚注まとめ係
     autoCount = 0;
-    setTimeout(() => { runFootnote(); }, 1500);
+    setTimeout(() => { if (!isGenerating()) runFootnote(); }, 500);
   }
 
   /* ===================== プチボット ===================== */
