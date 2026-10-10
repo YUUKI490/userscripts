@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         AIのべりすと キャラ画像
 // @namespace    yuuki490-ainovel
-// @version      1.3
+// @version      1.4
 // @description  縦書き表示のパネルで、セリフの頭にキャラの顔画像を表示し、括弧の前の名前は画像の上に移す。洗脳中のキャラは「名前_洗脳」の画像に差し替える。画像の登録は画面の仮ボタン（顔）から。前のキャラ画像スクリプトで登録した画像と対応表をそのまま使う
 // @match        https://ai-novel.com/*
 // @grant        none
@@ -63,6 +63,9 @@
     #${SETTINGS_ID} .cs-prow { display:flex; align-items:center; gap:8px; }
     #${SETTINGS_ID} .cs-prow img { width:48px; height:48px; object-fit:cover; border-radius:6px; background:#eee; flex:none; }
     #${SETTINGS_ID} .cs-prow input { flex:1; min-width:0; font-size:16px; padding:6px 8px; border:1px solid #999; border-radius:8px; }
+    /* ブラウザによって「参照」ボタンが出ないことがあるので、自前のボタンから選ぶ */
+    #${SETTINGS_ID} .cs-pick { position:relative; display:inline-block; overflow:hidden; }
+    #${SETTINGS_ID} .cs-pick input[type=file] { position:absolute !important; left:0 !important; top:0 !important; width:1px !important; height:1px !important; opacity:0 !important; pointer-events:none !important; }
     #${SETTINGS_ID} .cs-reg { background:#4caf50; border-color:#2e7d32; color:#fff; }
     #${SETTINGS_ID} .cs-ok { color:#2d8a34; }
   `;
@@ -389,7 +392,7 @@
       <div class="cs-box">
         <div class="cs-head"><span>キャラ画像の設定</span><button type="button" class="cs-close">×</button></div>
         <div class="cs-label">画像を登録（まとめて選べるよ。選んだら画像ごとにキャラの名前を入れてね。洗脳中の画像は「名前_洗脳」）</div>
-        <div class="cs-row"><input type="file" accept="image/*" multiple class="cs-file"></div>
+        <div class="cs-row"><label class="cs-btn cs-pick">🖼 画像を選ぶ<input type="file" accept="image/*" multiple class="cs-file"></label></div>
         <div class="cs-pending"></div>
         <div class="cs-row cs-regrow" style="display:none"><button type="button" class="cs-btn cs-reg">この名前で登録</button></div>
         <div class="cs-label">対応表（1行に「名前=画像ファイル名」。洗脳中の画像は「名前_洗脳=ファイル名」）</div>
