@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         AIのべりすと 生成後の自動処理
 // @namespace    yuuki490-ainovel
-// @version      1.3
-// @description  生成完了時、途中で切れていれば「続ける」を押す。ちゃんと終わっていれば脚注まとめ係のプチボットを動かし、脚注の差し替えと洗脳状態の保存を行う
+// @version      1.4
+// @description  生成完了時、途中で切れていれば「続ける」を押す（5回まで。それでも切れていれば最後の行を消す）。ちゃんと終わっていれば脚注まとめ係のプチボットを動かし、脚注の差し替えと洗脳状態の保存を行う
 // @match        https://ai-novel.com/*
 // @grant        none
 // @run-at       document-idle
@@ -14,8 +14,8 @@
   /* ===================== 設定 ===================== */
   // この文字で終わっていれば「ちゃんと終わった」とみなす
   const END_CHARS = '。．.，,！？!?‼⁉」』）)】〕〉》］]｝}"”’\'―〜~♪♡❤★☆';
-  // 途中切れで続けて自動で押す回数の上限
-  const MAX_AUTO = 3;
+  // 生成の回数の上限（最初の生成も含む）。この回数まで途中切れなら「続ける」を押す
+  const MAX_GENERATIONS = 5;
   // 生成完了から「続ける」を押すまでの待ち時間（ミリ秒）
   const DELAY = 800;
   // 生成中かどうかを確認する間隔（ミリ秒）
@@ -147,22 +147,67 @@
     const field = document.getElementById('chat_field');
     const fieldHasText = field && field.value.trim() !== '';
 
-    // 途中で切れている → もう一度「続ける」
-    if (!complete && autoCount < MAX_AUTO && !fieldHasText) {
+    // 途中で切れている → もう一度「続ける」（最初の生成も含めて MAX_GENERATIONS 回まで）
+    if (!complete && autoCount + 1 < MAX_GENERATIONS && !fieldHasText) {
       setTimeout(() => {
         if (isGenerating() || busy) return;
         const btn = document.querySelector(CONTINUE_SELECTOR);
         if (!btn) return;
         autoCount++;
-        console.log('[生成後の自動処理] 最後の文字「' + c + '」なので続けるよ（' + autoCount + '回目）');
+        console.log('[生成後の自動処理] 最後の文字「' + c + '」なので続けるよ（' + (autoCount + 1) + '回目の生成）');
         btn.click();
       }, DELAY);
       return;
     }
 
-    // ちゃんと終わった（または続けるのをあきらめた）→ 脚注まとめ係
+    // 上限まで生成しても途中で切れていたら、最後の行を消す
+    if (!complete && autoCount + 1 >= MAX_GENERATIONS) {
+      const removed = deleteLastLine();
+      if (removed) {
+        const shown = Array.from(removed).length > 30 ? Array.from(removed).slice(0, 30).join('') + '…' : removed;
+        toast('途中で切れていた最後の行を消したよ：' + shown, 'rgba(230,120,0,.95)');
+      }
+    }
+
+    // 脚注まとめ係へ
     autoCount = 0;
-    setTimeout(() => { if (!isGenerating()) runFootnote(); }, 500);
+    setTimeout(() => { if (!isGenerating()) runFootnote(); }, 1000);
+  }
+
+  function escapeHtml(s) {
+    return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+
+  // 本文の最後のAIブロックから、最後の行を消す。消した行を返す（消せなければ空文字）
+  function deleteLastLine() {
+    const container = document.getElementById('data_container');
+    if (!container) return '';
+    const blocks = container.querySelectorAll('.data_block');
+    if (!blocks.length) return '';
+    const block = blocks[blocks.length - 1];
+    const edit = block.querySelector('.data_edit');
+    if (!edit || !edit.classList.contains('assistant')) return '';
+
+    const raw = edit.getAttribute('data-raw-markdown') ?? (edit.innerText || '');
+    const trimmed = raw.replace(/\s+$/, '');
+    const idx = trimmed.lastIndexOf('\n');
+    if (idx < 0) return ''; // 1行しかないときはブロックが空になるので消さない
+    const removed = trimmed.slice(idx + 1).trim();
+    const next = trimmed.slice(0, idx).replace(/\s+$/, '');
+
+    edit.setAttribute('data-raw-markdown', next);
+    edit.innerHTML = escapeHtml(next).replace(/\n/g, '<br>');
+    const cc = block.querySelector('.label_charcount');
+    if (cc) cc.textContent = Array.from(next).length + '字';
+
+    const calls = [
+      () => fireInput(edit),
+      () => window.VisualChange && window.VisualChange(),
+      () => window.CopyContent && window.CopyContent(),
+      () => window.syncDOMToStorageDebounced && window.syncDOMToStorageDebounced(null),
+    ];
+    calls.forEach((fn) => { try { fn(); } catch (e) { console.warn('[生成後の自動処理]', e); } });
+    return removed;
   }
 
   /* ===================== プチボット ===================== */
