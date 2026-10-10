@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         AIのべりすと キャラ画像
 // @namespace    yuuki490-ainovel
-// @version      1.4
+// @version      1.5
 // @description  縦書き表示のパネルで、セリフの頭にキャラの顔画像を表示し、括弧の前の名前は画像の上に移す。洗脳中のキャラは「名前_洗脳」の画像に差し替える。画像の登録は画面の仮ボタン（顔）から。前のキャラ画像スクリプトで登録した画像と対応表をそのまま使う
 // @match        https://ai-novel.com/*
 // @grant        none
@@ -392,7 +392,7 @@
       <div class="cs-box">
         <div class="cs-head"><span>キャラ画像の設定</span><button type="button" class="cs-close">×</button></div>
         <div class="cs-label">画像を登録（まとめて選べるよ。選んだら画像ごとにキャラの名前を入れてね。洗脳中の画像は「名前_洗脳」）</div>
-        <div class="cs-row"><label class="cs-btn cs-pick">🖼 画像を選ぶ<input type="file" accept="image/*" multiple class="cs-file"></label></div>
+        <div class="cs-row"><label class="cs-btn cs-pick">🖼 画像を選ぶ<input type="file" multiple class="cs-file"></label></div>
         <div class="cs-pending"></div>
         <div class="cs-row cs-regrow" style="display:none"><button type="button" class="cs-btn cs-reg">この名前で登録</button></div>
         <div class="cs-label">対応表（1行に「名前=画像ファイル名」。洗脳中の画像は「名前_洗脳=ファイル名」）</div>
@@ -431,8 +431,15 @@
     }
 
     box.querySelector('.cs-file').addEventListener('change', (e) => {
-      const files = Array.from(e.target.files || []);
+      // accept を付けるとスマホのChrome系（Edgeなど）は写真の選択画面になり「参照」が出ないので、
+      // 何でも選べる画面にして、画像以外はここで外す
+      const all = Array.from(e.target.files || []);
+      const files = all.filter((f) => /^image\//.test(f.type) || /\.(png|jpe?g|gif|webp|bmp|avif)$/i.test(f.name));
       e.target.value = '';
+      if (all.length !== files.length) {
+        result.className = 'cs-msg cs-result';
+        result.textContent = '画像じゃないファイルが' + (all.length - files.length) + '個あったので外したよ';
+      }
       files.forEach((f) => {
         const base = f.name.replace(/\.[^.]+$/, '');
         const guess = /^[0-9_\-\s]+$/.test(base) ? '' : base; // 数字だけの名前は使わない
