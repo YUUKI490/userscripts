@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         AIのべりすと 生成後の自動処理
 // @namespace    yuuki490-ainovel
-// @version      1.2
+// @version      1.3
 // @description  生成完了時、途中で切れていれば「続ける」を押す。ちゃんと終わっていれば脚注まとめ係のプチボットを動かし、脚注の差し替えと洗脳状態の保存を行う
 // @match        https://ai-novel.com/*
 // @grant        none
@@ -101,6 +101,12 @@
     };
   }
 
+  // 「」『』（）が閉じていなければ、セリフの途中で切れているとみなす
+  const BRACKETS = [['「', '」'], ['『', '』'], ['（', '）'], ['(', ')']];
+  function hasOpenBracket(text) {
+    return BRACKETS.some(([open, close]) => text.lastIndexOf(open) > text.lastIndexOf(close));
+  }
+
   function lastChar(text) {
     const chars = Array.from(text);
     return chars.length ? chars[chars.length - 1] : '';
@@ -137,7 +143,7 @@
     if (!info) { autoCount = 0; return; }
 
     const c = lastChar(info.text);
-    const complete = END_CHARS.includes(c);
+    const complete = END_CHARS.includes(c) && !hasOpenBracket(info.text);
     const field = document.getElementById('chat_field');
     const fieldHasText = field && field.value.trim() !== '';
 
