@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         AIのべりすと AIブロック追加
 // @namespace    yuuki490-ainovel
-// @version      2.1
-// @description  画面の仮ボタン（➕）で入力パネルを開き、ユーザーブロック＋AIブロック（書き出し入り）を作って「続ける」を押す
+// @version      2.2
+// @description  画面の仮ボタン（➕）で入力パネルを開き、ユーザーブロック＋AIブロック（書き出し入り）を作って「続ける」を押す。テンプレの {章} を章番号に置き換える（次の章／現在の章の続き／断章）
 // @match        https://ai-novel.com/*
 // @grant        none
 // @run-at       document-idle
@@ -16,6 +16,13 @@
   const CONTINUE_SELECTOR = '#getcontinuation_chat';
   const QP_SHOW_SELECTOR = '#qp_show_btn';
   const QP_LOAD_SELECTOR = '#qp_load_btn';
+  const KEY_CHAPTER_MODE = 'ainovel_aiblock_chapter_mode';
+  const CHAPTER_MARK = '{章}';
+  const CHAPTER_MODES = [
+    { id: 'next', label: '次章' },
+    { id: 'cont', label: '続き' },
+    { id: 'side', label: '断章' },
+  ];
 
   /* ---------- 見た目 ---------- */
   const style = document.createElement('style');
@@ -31,7 +38,8 @@
     #aib_user_area { flex:1.3; }
     .aib_row { display:flex; gap:7px; align-items:stretch; }
     .aib_btn { border:1px solid #888; border-radius:9px; background:#f2f2f2; color:#222; padding:10px 12px; font-size:15px; font-weight:700; cursor:pointer; }
-    #aib_continue { margin-left:auto; min-width:110px; background:rgb(205,43,90); border-color:#000; color:#fff; font-size:18px; }
+    #aib_mode { margin-left:auto; min-width:64px; background:#fff3c4; border-color:#c9a400; }
+    #aib_continue { min-width:110px; background:rgb(205,43,90); border-color:#000; color:#fff; font-size:18px; }
     .aib_tpl { flex:1; font-size:20px; }
     #aib_tpl_set { flex:none; width:52px; border-radius:50%; font-size:20px; padding:0; }
     #aib_settings { position:absolute; inset:0; background:#fff; border-radius:12px; padding:10px; box-sizing:border-box; display:none; flex-direction:column; gap:8px; }
@@ -116,12 +124,116 @@
     return true;
   }
 
+  /* ---------- 章番号 ---------- */
+  const KANJI_DIGITS = '〇一二三四五六七八九';
+
+  function kanjiToNum(k) {
+    if (!k) return NaN;
+    if (/^[〇零一二三四五六七八九]+$/.test(k) && !/[十百]/.test(k) && k.length > 1) {
+      return Number(Array.from(k).map((c) => (c === '零' ? 0 : KANJI_DIGITS.indexOf(c))).join(''));
+    }
+    let total = 0;
+    let cur = 0;
+    for (const c of k) {
+      if (c === '百') { total += (cur || 1) * 100; cur = 0; }
+      else if (c === '十') { total += (cur || 1) * 10; cur = 0; }
+      else if (c === '零') { cur = 0; }
+      else {
+        const d = KANJI_DIGITS.indexOf(c);
+        if (d < 0) return NaN;
+        cur = d;
+      }
+    }
+    return total + cur;
+  }
+
+  function numToKanji(n) {
+    if (n === 0) return '〇';
+    let out = '';
+    const h = Math.floor(n / 100);
+    const t = Math.floor((n % 100) / 10);
+    const o = n % 10;
+    if (h) out += (h > 1 ? KANJI_DIGITS[h] : '') + '百';
+    if (t) out += (t > 1 ? KANJI_DIGITS[t] : '') + '十';
+    if (o) out += KANJI_DIGITS[o];
+    return out;
+  }
+
+  const toHalf = (s) => s.replace(/[０-９]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xfee0)).replace(/[．・]/g, '.');
+  const toFull = (s) => s.replace(/[0-9]/g, (c) => String.fromCharCode(c.charCodeAt(0) + 0xfee0)).replace(/\./g, '．');
+
+  // 本文を下から見て、一番新しい「第〇章」を探す
+  const CHAPTER_RE = /第([0-9０-９〇零一二三四五六七八九十百]+)(?:[.．・]([0-9０-９〇一二三四五六七八九]+))?章([^\n]*)/g;
+
+  function findLatestChapter() {
+    const blocks = document.querySelectorAll('#data_container .data_block');
+    for (let i = blocks.length - 1; i >= 0; i--) {
+      const edit = blocks[i].querySelector('.data_edit');
+      if (!edit) continue;
+      const text = edit.getAttribute('data-raw-markdown') || edit.innerText || '';
+      let m;
+      let last = null;
+      CHAPTER_RE.lastIndex = 0;
+      while ((m = CHAPTER_RE.exec(text)) !== null) last = m;
+      if (!last) continue;
+      const [, intRaw, decRaw, rest] = last;
+      const style = /[０-９]/.test(intRaw) ? 'full' : /[0-9]/.test(intRaw) ? 'half' : 'kanji';
+      const toNum = (r) => (style === 'kanji' ? kanjiToNum(r) : Number(toHalf(r)));
+      const main = toNum(intRaw);
+      const sub = decRaw ? toNum(decRaw) : null;
+      if (Number.isNaN(main)) continue;
+      const title = rest.replace(/^[\s\u3000]+/, '').replace(/[\s\u3000]*[（(]続き[）)][\s\u3000]*$/, '').trim();
+      return { main, sub, style, title };
+    }
+    return null;
+  }
+
+  function formatNum(n, style) {
+    if (style === 'kanji') return numToKanji(n);
+    return style === 'full' ? toFull(String(n)) : String(n);
+  }
+
+  function formatChapter(main, sub, style) {
+    let s = formatNum(main, style);
+    if (sub !== null && sub !== undefined) {
+      s += (style === 'kanji' ? '・' : style === 'full' ? '．' : '.') + formatNum(sub, style);
+    }
+    return '第' + s + '章';
+  }
+
+  function chapterText(mode) {
+    const latest = findLatestChapter();
+    if (!latest) {
+      if (mode === 'side') return formatChapter(0, 5, 'half');
+      if (mode === 'cont') return '';
+      return formatChapter(1, null, 'half');
+    }
+    const { main, sub, style, title } = latest;
+    if (mode === 'next') return formatChapter(main + 1, null, style);
+    if (mode === 'cont') return formatChapter(main, sub, style) + (title ? '　' + title : '') + '（続き）';
+    // 断章：第5章 → 第5.5章、第5.5章 → 第5.6章
+    return formatChapter(main, sub === null ? 5 : sub + 1, style);
+  }
+
+  function loadMode() {
+    try {
+      const v = localStorage.getItem(KEY_CHAPTER_MODE);
+      return CHAPTER_MODES.some((m) => m.id === v) ? v : 'next';
+    } catch (_) { return 'next'; }
+  }
+  function saveMode(v) {
+    try { localStorage.setItem(KEY_CHAPTER_MODE, v); } catch (_) {}
+  }
+
   /* ---------- パネル ---------- */
   let overlay = null;
   let userField = null;
   let aiField = null;
   let settings = null;
   let setFields = [];
+  let modeBtn = null;
+  let chapterMode = loadMode();
+  let lastChapter = null; // AI欄に入れた章の文字（モード切り替え時に差し替える）
 
   function buildPanel() {
     overlay = document.createElement('div');
@@ -136,6 +248,7 @@
         <div class="aib_row">
           <button type="button" class="aib_btn" id="aib_qp_show">QP辞書</button>
           <button type="button" class="aib_btn" id="aib_qp_load">QP読込</button>
+          <button type="button" class="aib_btn" id="aib_mode"></button>
           <button type="button" class="aib_btn" id="aib_continue">続ける</button>
         </div>
         <div class="aib_area">
@@ -181,9 +294,29 @@
 
     overlay.querySelectorAll('.aib_tpl').forEach((btn) => {
       btn.addEventListener('click', () => {
-        const t = loadTemplates()[Number(btn.dataset.i)];
+        let t = loadTemplates()[Number(btn.dataset.i)];
+        lastChapter = null;
+        if (t.includes(CHAPTER_MARK)) {
+          lastChapter = chapterText(chapterMode);
+          t = t.split(CHAPTER_MARK).join(lastChapter);
+        }
         aiField.value = t;
       });
+    });
+
+    modeBtn = overlay.querySelector('#aib_mode');
+    updateModeButton();
+    modeBtn.addEventListener('click', () => {
+      const i = CHAPTER_MODES.findIndex((m) => m.id === chapterMode);
+      chapterMode = CHAPTER_MODES[(i + 1) % CHAPTER_MODES.length].id;
+      saveMode(chapterMode);
+      updateModeButton();
+      // すでにAI欄へ入れた章があれば、新しいモードのものに差し替える
+      if (lastChapter !== null && aiField.value.includes(lastChapter) && lastChapter !== '') {
+        const next = chapterText(chapterMode);
+        aiField.value = aiField.value.replace(lastChapter, next);
+        lastChapter = next;
+      }
     });
 
     overlay.querySelector('#aib_tpl_set').addEventListener('click', () => {
@@ -202,6 +335,13 @@
     });
   }
 
+  function updateModeButton() {
+    if (!modeBtn) return;
+    const m = CHAPTER_MODES.find((x) => x.id === chapterMode) || CHAPTER_MODES[0];
+    modeBtn.textContent = m.label;
+    modeBtn.title = '章番号の入れ方（押すと 次章 → 続き → 断章 の順に切り替え）';
+  }
+
   function openPanel() {
     if (!overlay) buildPanel();
     settings.classList.remove('aib-open');
@@ -216,6 +356,7 @@
     if (!addBlocks(userField.value, aiField.value)) return;
     userField.value = '';
     aiField.value = '';
+    lastChapter = null;
     closePanel();
     // サイト側の保存が追いつくのを少し待ってから「続ける」を押す
     setTimeout(() => {
