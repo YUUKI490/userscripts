@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         AIのべりすと キャラ画像
 // @namespace    yuuki490-ainovel
-// @version      1.0
-// @description  縦書き表示のパネルで、セリフの頭にキャラの顔画像を表示する。洗脳中のキャラは「名前_洗脳」の画像に差し替える。画像の登録は画面の仮ボタン（顔）から。前のキャラ画像スクリプトで登録した画像と対応表をそのまま使う
+// @version      1.1
+// @description  縦書き表示のパネルで、セリフの頭にキャラの顔画像を表示し、括弧の前の名前は画像の上に移す。洗脳中のキャラは「名前_洗脳」の画像に差し替える。画像の登録は画面の仮ボタン（顔）から。前のキャラ画像スクリプトで登録した画像と対応表をそのまま使う
 // @match        https://ai-novel.com/*
 // @grant        none
 // @run-at       document-idle
@@ -30,15 +30,18 @@
   const SETTINGS_ID = 'ainovel-char-image-settings';
   const ON_CLASS = 'cimg-on';
   const FACE_CLASS = 'cimg-face';
+  const NAME_CLASS = 'cimg-name';
+  const NAME_HEIGHT = 14; // 画像の上の名前の高さ(px)
 
   /* ===================== 見た目 ===================== */
   const style = document.createElement('style');
   style.textContent = `
     #${OPEN_BTN_ID} { position:fixed; left:8px; bottom:240px; z-index:99980; width:48px; height:48px; border-radius:50%; border:1px solid #000; background:#6a4c93; color:#fff; font-size:20px; line-height:1; padding:0; cursor:pointer; box-shadow:0 2px 8px rgba(0,0,0,.4); opacity:.85; }
 
-    /* 縦書きパネル：顔のある本文では全部の行を顔の高さぶん下げて、行頭をそろえる */
-    #${SCROLLER_ID}.${ON_CLASS} .tg-line { position:relative !important; padding-top:calc(var(--cimg-size, 32px) + var(--cimg-gap, 6px)) !important; }
-    #${SCROLLER_ID} .${FACE_CLASS} { position:absolute !important; top:0 !important; right:50% !important; transform:translateX(50%) !important; width:var(--cimg-size, 32px) !important; height:var(--cimg-size, 32px) !important; object-fit:cover !important; margin:0 !important; padding:0 !important; border:none !important; border-radius:4px; }
+    /* 縦書きパネル：顔のある本文では全部の行を「名前＋顔」の高さぶん下げて、行頭をそろえる */
+    #${SCROLLER_ID}.${ON_CLASS} .tg-line { position:relative !important; padding-top:calc(var(--cimg-name, 14px) + var(--cimg-size, 32px) + var(--cimg-gap, 6px)) !important; }
+    #${SCROLLER_ID} .${FACE_CLASS} { position:absolute !important; top:var(--cimg-name, 14px) !important; right:50% !important; transform:translateX(50%) !important; width:var(--cimg-size, 32px) !important; height:var(--cimg-size, 32px) !important; object-fit:cover !important; margin:0 !important; padding:0 !important; border:none !important; border-radius:4px; }
+    #${SCROLLER_ID} .${NAME_CLASS} { position:absolute !important; top:0 !important; right:50% !important; transform:translateX(50%) !important; height:var(--cimg-name, 14px) !important; line-height:var(--cimg-name, 14px) !important; writing-mode:horizontal-tb !important; white-space:nowrap !important; text-align:center !important; font-family:sans-serif !important; font-weight:700 !important; color:#555 !important; margin:0 !important; padding:0 !important; }
 
     #${SETTINGS_ID} { position:fixed; inset:0; z-index:99992; background:rgba(0,0,0,.55); display:flex; align-items:center; justify-content:center; padding:10px; box-sizing:border-box; font-family:sans-serif; }
     #${SETTINGS_ID} .cs-box { width:min(560px,100%); max-height:92vh; overflow-y:auto; background:#fff; color:#222; border-radius:12px; padding:12px; box-sizing:border-box; display:flex; flex-direction:column; gap:10px; }
@@ -196,6 +199,38 @@
   let applying = false;
   let applyAgain = false;
 
+  // 行の頭の文字から名前を取り除く（取り除いた名前は行に覚えておく）
+  function stripName(line, name) {
+    const walker = document.createTreeWalker(line, NodeFilter.SHOW_TEXT);
+    let node;
+    while ((node = walker.nextNode())) {
+      if (node.parentElement && node.parentElement.closest('.' + NAME_CLASS)) continue;
+      if (!node.nodeValue.trim()) continue;
+      const m = node.nodeValue.match(/^[\s\u3000]*/);
+      const lead = m ? m[0].length : 0;
+      if (node.nodeValue.slice(lead, lead + name.length) === name) {
+        node.nodeValue = node.nodeValue.slice(lead + name.length);
+        line.dataset.cimgName = name;
+      }
+      return;
+    }
+  }
+
+  // 顔をやめるときは、取り除いた名前を行の頭に戻す
+  function restoreName(line) {
+    const name = line.dataset.cimgName;
+    line.querySelectorAll('.' + NAME_CLASS + ', .' + FACE_CLASS).forEach((el) => el.remove());
+    if (!name) return;
+    line.insertBefore(document.createTextNode(name), line.firstChild);
+    delete line.dataset.cimgName;
+  }
+
+  // 名前が長いときは、顔の幅の1.8倍に収まるように文字を小さくする
+  function nameFontSize(name) {
+    const len = Math.max(1, Array.from(name).length);
+    return Math.max(8, Math.min(12, Math.floor((iconSize * 1.8) / len)));
+  }
+
   async function applyFaces() {
     const scroller = document.getElementById(SCROLLER_ID);
     if (!scroller) return;
@@ -207,15 +242,16 @@
 
       scroller.style.setProperty('--cimg-size', iconSize + 'px');
       scroller.style.setProperty('--cimg-gap', iconGap + 'px');
+      scroller.style.setProperty('--cimg-name', NAME_HEIGHT + 'px');
 
       const jobs = [];
       scroller.querySelectorAll('.tg-line').forEach((line) => {
         const old = line.querySelector('.' + FACE_CLASS);
-        const name = speakerOf(line.textContent);
+        const name = line.dataset.cimgName || speakerOf(line.textContent);
         const filename = name ? resolveFilename(name) : null;
-        if (!filename) { if (old) old.remove(); return; }
+        if (!filename) { if (old || line.dataset.cimgName) restoreName(line); return; }
         if (old && old.dataset.file === filename) return;
-        jobs.push({ line, old, filename });
+        jobs.push({ line, old, filename, name });
       });
 
       const hasFace = jobs.length > 0 || !!scroller.querySelector('.' + FACE_CLASS);
@@ -229,7 +265,15 @@
         img.alt = '';
         img.dataset.file = job.filename;
         img.src = url;
-        if (!job.old) job.line.insertBefore(img, job.line.firstChild);
+        if (!job.old) {
+          if (!job.line.dataset.cimgName) stripName(job.line, job.name);
+          const label = document.createElement('span');
+          label.className = NAME_CLASS;
+          label.textContent = job.name;
+          label.style.setProperty('font-size', nameFontSize(job.name) + 'px', 'important');
+          job.line.insertBefore(img, job.line.firstChild);
+          job.line.insertBefore(label, job.line.firstChild);
+        }
       }
       scroller.classList.toggle(ON_CLASS, !!scroller.querySelector('.' + FACE_CLASS));
 
@@ -254,7 +298,9 @@
 
   function refreshAll() {
     const s = document.getElementById(SCROLLER_ID);
-    if (s) s.querySelectorAll('.' + FACE_CLASS).forEach((img) => { delete img.dataset.file; });
+    if (s) s.querySelectorAll('.tg-line').forEach((line) => {
+      if (line.dataset.cimgName || line.querySelector('.' + FACE_CLASS)) restoreName(line);
+    });
     applyFaces();
   }
 
