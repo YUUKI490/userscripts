@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         AIのべりすと 縦書き表示
 // @namespace    yuuki490-ainovel
-// @version      1.0
-// @description  本文（ユーザーのブロックを除く）を縦書きにして、画面にかぶせるパネルで表示する。生成が終わると自動で更新。パネルからAIブロック追加の入力パネルを開ける。開くのは画面の仮ボタン（縦）から
+// @version      1.1
+// @description  本文（ユーザーのブロックを除く）を縦書きにして、画面にかぶせるパネルで表示する。生成が終わると自動で更新。パネルからAIブロック追加の入力パネルを開ける。文字の大きさと行間はパネルの⚙で変えられる。開くのは画面の仮ボタン（縦）から
 // @match        https://ai-novel.com/*
 // @grant        none
 // @run-at       document-idle
@@ -30,6 +30,10 @@
   const INPUT_ID = 'ainovel-tategaki-input';
   const OPEN_CLASS = 'ainovel-tategaki-open';
   const KEY_OPEN = 'ainovel_tategaki_open';
+  const KEY_VIEW = 'ainovel_tategaki_view'; // { fontSize, lineHeight }
+  const SET_BTN_ID = 'ainovel-tategaki-setbtn';
+  const SET_BOX_ID = 'ainovel-tategaki-setbox';
+  const FONT_MIN = 12, FONT_MAX = 36, LH_MIN = 1.2, LH_MAX = 3.0;
   const AIB_BTN_ID = 'ainovel-add-ai-block-btn'; // AIブロック追加の仮ボタン
 
   /* ===================== 見た目 ===================== */
@@ -44,17 +48,24 @@
     #${SCROLLER_ID} {
       position:absolute; inset:0; overflow-x:auto; overflow-y:hidden; -webkit-overflow-scrolling:touch;
       writing-mode:vertical-rl; -webkit-writing-mode:vertical-rl; text-orientation:mixed;
-      font-family:${CONFIG.fontFamily}; font-size:${CONFIG.fontSize}px; line-height:${CONFIG.lineHeight}; letter-spacing:.02em;
+      font-family:${CONFIG.fontFamily}; font-size:var(--tg-font, ${CONFIG.fontSize}px); line-height:var(--tg-lh, ${CONFIG.lineHeight}); letter-spacing:.02em;
       -webkit-text-size-adjust:none; text-size-adjust:none;
       line-break:strict; word-break:normal; overflow-wrap:anywhere;
       padding:2.2em 1.6em 1.6em 1.6em; box-sizing:border-box; text-align:start;
     }
-    #${SCROLLER_ID} .tg-line, #${SCROLLER_ID} .tg-empty { margin:0; padding:0; font-size:${CONFIG.fontSize}px; line-height:${CONFIG.lineHeight}; font-family:${CONFIG.fontFamily}; }
+    #${SCROLLER_ID} .tg-line, #${SCROLLER_ID} .tg-empty { margin:0; padding:0; font-size:var(--tg-font, ${CONFIG.fontSize}px); line-height:var(--tg-lh, ${CONFIG.lineHeight}); font-family:${CONFIG.fontFamily}; }
     #${SCROLLER_ID} .tg-tcy { text-combine-upright:all; -webkit-text-combine:horizontal; }
     #${SCROLLER_ID} rt { font-size:.5em; }
     #${SCROLLER_ID} .tg-none { writing-mode:horizontal-tb; color:#999; font-size:15px; padding:24px; }
 
     #${CLOSE_ID} { position:absolute; top:8px; left:8px; z-index:1; width:40px; height:40px; border:none; border-radius:50%; background:rgba(0,0,0,.08); color:#444; font-size:20px; line-height:40px; padding:0; text-align:center; cursor:pointer; }
+    #${SET_BTN_ID} { position:absolute; top:56px; left:8px; z-index:1; width:40px; height:40px; border:none; border-radius:50%; background:rgba(0,0,0,.08); color:#444; font-size:20px; line-height:40px; padding:0; text-align:center; cursor:pointer; }
+    #${SET_BOX_ID} { display:none; position:absolute; top:104px; left:8px; z-index:2; writing-mode:horizontal-tb; background:#fff; color:#222; border:1px solid #ccc; border-radius:10px; box-shadow:0 4px 16px rgba(0,0,0,.25); padding:10px 12px; font-family:sans-serif; font-size:14px; }
+    #${SET_BOX_ID}.tg-open { display:block; }
+    #${SET_BOX_ID} .tg-row { display:flex; align-items:center; gap:8px; margin:4px 0; }
+    #${SET_BOX_ID} .tg-name { width:5em; font-weight:700; }
+    #${SET_BOX_ID} .tg-val { min-width:3.5em; text-align:center; }
+    #${SET_BOX_ID} button { width:40px; height:36px; border:1px solid #888; border-radius:8px; background:#f2f2f2; color:#222; font-size:18px; cursor:pointer; padding:0; }
     #${INPUT_ID} { position:absolute; left:12px; bottom:calc(12px + env(safe-area-inset-bottom, 0px)); z-index:1; height:42px; min-width:100px; padding:6px 14px; border:none; border-radius:21px; background:rgba(0,0,0,.62); color:#fff; font-size:15px; line-height:30px; writing-mode:horizontal-tb; box-sizing:border-box; cursor:pointer; }
   `;
   document.head.appendChild(style);
@@ -121,6 +132,62 @@
   let lastText = null;
   let renderTimer = null;
 
+  /* ===================== 文字の大きさと行間 ===================== */
+  let view = loadView();
+
+  function loadView() {
+    let v = {};
+    try { v = JSON.parse(localStorage.getItem(KEY_VIEW) || '{}') || {}; } catch (_) {}
+    const f = Number(v.fontSize);
+    const l = Number(v.lineHeight);
+    return {
+      fontSize: Number.isFinite(f) ? Math.min(FONT_MAX, Math.max(FONT_MIN, f)) : CONFIG.fontSize,
+      lineHeight: Number.isFinite(l) ? Math.min(LH_MAX, Math.max(LH_MIN, l)) : CONFIG.lineHeight,
+    };
+  }
+  function saveView() { try { localStorage.setItem(KEY_VIEW, JSON.stringify(view)); } catch (_) {} }
+
+  function applyView() {
+    if (!scroller) return;
+    scroller.style.setProperty('--tg-font', view.fontSize + 'px');
+    scroller.style.setProperty('--tg-lh', String(view.lineHeight));
+    const box = document.getElementById(SET_BOX_ID);
+    if (box) {
+      box.querySelector('[data-v="font"]').textContent = view.fontSize + 'px';
+      box.querySelector('[data-v="lh"]').textContent = view.lineHeight.toFixed(1);
+    }
+  }
+
+  function changeView(kind, dir) {
+    if (kind === 'font') view.fontSize = Math.min(FONT_MAX, Math.max(FONT_MIN, view.fontSize + dir));
+    else view.lineHeight = Math.min(LH_MAX, Math.max(LH_MIN, Math.round((view.lineHeight + dir * 0.1) * 10) / 10));
+    saveView();
+    applyView();
+    // キャラ画像なども入れ直せるように、本文を作り直す（読んでいた位置はそのまま）
+    lastText = null;
+    render(false);
+  }
+
+  function buildSettings() {
+    const btn = document.createElement('button');
+    btn.id = SET_BTN_ID;
+    btn.type = 'button';
+    btn.textContent = '⚙';
+    btn.setAttribute('aria-label', '文字の大きさと行間');
+    const box = document.createElement('div');
+    box.id = SET_BOX_ID;
+    box.innerHTML = `
+      <div class="tg-row"><span class="tg-name">文字</span><button type="button" data-k="font" data-d="-1">−</button><span class="tg-val" data-v="font"></span><button type="button" data-k="font" data-d="1">＋</button></div>
+      <div class="tg-row"><span class="tg-name">行間</span><button type="button" data-k="lh" data-d="-1">−</button><span class="tg-val" data-v="lh"></span><button type="button" data-k="lh" data-d="1">＋</button></div>`;
+    btn.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); box.classList.toggle('tg-open'); });
+    box.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const b = e.target.closest('button[data-k]');
+      if (b) changeView(b.dataset.k, Number(b.dataset.d));
+    });
+    return [btn, box];
+  }
+
   function buildPanel() {
     if (overlay && document.body.contains(overlay)) return;
     overlay = document.createElement('div');
@@ -149,10 +216,15 @@
       setTimeout(() => { input.textContent = '✍ 入力'; }, 2500);
     });
 
+    const [setBtn, setBox] = buildSettings();
+
     overlay.appendChild(scroller);
     overlay.appendChild(close);
+    overlay.appendChild(setBtn);
+    overlay.appendChild(setBox);
     overlay.appendChild(input);
     document.body.appendChild(overlay);
+    applyView();
   }
 
   const isOpen = () => document.body.classList.contains(OPEN_CLASS);
