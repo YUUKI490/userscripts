@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         AIのべりすと 生成後の自動処理
 // @namespace    yuuki490-ainovel
-// @version      1.1
+// @version      1.2
 // @description  生成完了時、途中で切れていれば「続ける」を押す。ちゃんと終わっていれば脚注まとめ係のプチボットを動かし、脚注の差し替えと洗脳状態の保存を行う
 // @match        https://ai-novel.com/*
 // @grant        none
@@ -342,6 +342,30 @@
   }
 
   /* ===================== 洗脳状態の保存 ===================== */
+  // キャラクターブックのタグ（例：「神代 美琴 神代美琴 ミコト」）から、
+  // 名前の一部やカタカナでもフルネームに直せるようにする
+  function canonicalName(name) {
+    const key = normalizeName(name);
+    if (!key) return name;
+    const inputs = document.querySelectorAll('input.witags, input[id^="witag"]');
+    for (const input of inputs) {
+      const tokens = String(input.value || '').split(/[\s\u3000]+/).filter(Boolean);
+      if (!tokens.length) continue;
+      if (!tokens.some((t) => normalizeName(t) === key)) continue;
+      return tokens.reduce((a, b) => (Array.from(b).length > Array.from(a).length ? b : a));
+    }
+    return name;
+  }
+
+  // 同じ人かどうか：完全に一致、または2文字以上で片方がもう片方を含む（QuickPasteと同じ考え方）
+  function sameName(a, b) {
+    const x = normalizeName(a);
+    const y = normalizeName(b);
+    if (!x || !y) return false;
+    if (x === y) return true;
+    return Math.min(x.length, y.length) >= 2 && (x.includes(y) || y.includes(x));
+  }
+
   function mergeStates(raw, list) {
     const lines = (raw || '').split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
     const rows = lines.map((l) => {
@@ -349,9 +373,15 @@
       return i < 1 ? { raw: l } : { name: l.slice(0, i).trim(), state: l.slice(i + 1).trim() };
     });
     list.forEach((s) => {
-      const key = normalizeName(s.name);
-      const hit = rows.find((r) => r.name && normalizeName(r.name) === key);
-      if (hit) hit.state = s.state; else rows.push({ name: s.name, state: s.state });
+      const name = canonicalName(s.name);
+      const hit = rows.find((r) => r.name && sameName(r.name, name));
+      if (hit) {
+        hit.state = s.state;
+        // 長いほう（フルネームに近いほう）の名前を残す
+        if (normalizeName(name).length > normalizeName(hit.name).length) hit.name = name;
+      } else {
+        rows.push({ name: name, state: s.state });
+      }
     });
     return rows.map((r) => (r.name ? r.name + '=' + r.state : r.raw)).join('\n');
   }
