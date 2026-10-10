@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         AIのべりすと 縦書き表示
 // @namespace    yuuki490-ainovel
-// @version      1.1
+// @version      1.2
 // @description  本文（ユーザーのブロックを除く）を縦書きにして、画面にかぶせるパネルで表示する。生成が終わると自動で更新。パネルからAIブロック追加の入力パネルを開ける。文字の大きさと行間はパネルの⚙で変えられる。開くのは画面の仮ボタン（縦）から
 // @match        https://ai-novel.com/*
 // @grant        none
@@ -51,7 +51,7 @@
       font-family:${CONFIG.fontFamily}; font-size:var(--tg-font, ${CONFIG.fontSize}px); line-height:var(--tg-lh, ${CONFIG.lineHeight}); letter-spacing:.02em;
       -webkit-text-size-adjust:none; text-size-adjust:none;
       line-break:strict; word-break:normal; overflow-wrap:anywhere;
-      padding:2.2em 1.6em 1.6em 1.6em; box-sizing:border-box; text-align:start;
+      padding:12px 1.6em 1.6em 60px; box-sizing:border-box; text-align:start;
     }
     #${SCROLLER_ID} .tg-line, #${SCROLLER_ID} .tg-empty { margin:0; padding:0; font-size:var(--tg-font, ${CONFIG.fontSize}px); line-height:var(--tg-lh, ${CONFIG.lineHeight}); font-family:${CONFIG.fontFamily}; }
     #${SCROLLER_ID} .tg-tcy { text-combine-upright:all; -webkit-text-combine:horizontal; }
