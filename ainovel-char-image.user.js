@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         AIのべりすと キャラ画像
 // @namespace    yuuki490-ainovel
-// @version      1.2
+// @version      1.3
 // @description  縦書き表示のパネルで、セリフの頭にキャラの顔画像を表示し、括弧の前の名前は画像の上に移す。洗脳中のキャラは「名前_洗脳」の画像に差し替える。画像の登録は画面の仮ボタン（顔）から。前のキャラ画像スクリプトで登録した画像と対応表をそのまま使う
 // @match        https://ai-novel.com/*
 // @grant        none
@@ -59,6 +59,11 @@
     #${SETTINGS_ID} .cs-item .cs-name { flex:1; word-break:break-all; }
     #${SETTINGS_ID} .cs-del { border:0; background:transparent; color:#c00; font-size:18px; cursor:pointer; }
     #${SETTINGS_ID} .cs-msg { font-size:13px; color:#c00; white-space:pre-wrap; }
+    #${SETTINGS_ID} .cs-pending { display:flex; flex-direction:column; gap:6px; }
+    #${SETTINGS_ID} .cs-prow { display:flex; align-items:center; gap:8px; }
+    #${SETTINGS_ID} .cs-prow img { width:48px; height:48px; object-fit:cover; border-radius:6px; background:#eee; flex:none; }
+    #${SETTINGS_ID} .cs-prow input { flex:1; min-width:0; font-size:16px; padding:6px 8px; border:1px solid #999; border-radius:8px; }
+    #${SETTINGS_ID} .cs-reg { background:#4caf50; border-color:#2e7d32; color:#fff; }
     #${SETTINGS_ID} .cs-ok { color:#2d8a34; }
   `;
   document.head.appendChild(style);
@@ -383,8 +388,10 @@
     overlay.innerHTML = `
       <div class="cs-box">
         <div class="cs-head"><span>キャラ画像の設定</span><button type="button" class="cs-close">×</button></div>
-        <div class="cs-label">画像を登録（まとめて選べるよ。ファイル名で保存されます）</div>
+        <div class="cs-label">画像を登録（まとめて選べるよ。選んだら画像ごとにキャラの名前を入れてね。洗脳中の画像は「名前_洗脳」）</div>
         <div class="cs-row"><input type="file" accept="image/*" multiple class="cs-file"></div>
+        <div class="cs-pending"></div>
+        <div class="cs-row cs-regrow" style="display:none"><button type="button" class="cs-btn cs-reg">この名前で登録</button></div>
         <div class="cs-label">対応表（1行に「名前=画像ファイル名」。洗脳中の画像は「名前_洗脳=ファイル名」）</div>
         <textarea class="cs-map" placeholder="焔=homura.png&#10;焔_洗脳=homura_bw.png"></textarea>
         <div class="cs-row">
@@ -407,21 +414,65 @@
     sizeField.value = iconSize;
     gapField.value = iconGap;
 
-    const close = () => overlay.remove();
-    box.querySelector('.cs-close').addEventListener('click', close);
+    // 選んだ画像を一覧に出して、画像ごとにキャラの名前を入れてもらう
+    // （スマホだとファイル名が数字になるので、入れた名前で保存して対応表にも足す）
+    const pendingBox = box.querySelector('.cs-pending');
+    const regRow = box.querySelector('.cs-regrow');
+    let pending = [];
 
-    box.querySelector('.cs-file').addEventListener('change', async (e) => {
+    function clearPending() {
+      pending.forEach((p) => URL.revokeObjectURL(p.preview));
+      pending = [];
+      pendingBox.innerHTML = '';
+      regRow.style.display = 'none';
+    }
+
+    box.querySelector('.cs-file').addEventListener('change', (e) => {
       const files = Array.from(e.target.files || []);
-      for (const f of files) {
-        await putImage(f.name, f).catch(() => {});
-        revokeUrl(f.name);
-      }
       e.target.value = '';
+      files.forEach((f) => {
+        const base = f.name.replace(/\.[^.]+$/, '');
+        const guess = /^[0-9_\-\s]+$/.test(base) ? '' : base; // 数字だけの名前は使わない
+        const preview = URL.createObjectURL(f);
+        const row = document.createElement('div');
+        row.className = 'cs-prow';
+        row.innerHTML = '<img alt=""><input type="text" placeholder="キャラの名前（例：焔、焔_洗脳）">';
+        row.querySelector('img').src = preview;
+        row.querySelector('input').value = guess;
+        pendingBox.appendChild(row);
+        pending.push({ file: f, preview, input: row.querySelector('input') });
+      });
+      regRow.style.display = pending.length ? 'flex' : 'none';
+      if (files.length) pending[pending.length - files.length].input.focus();
+    });
+
+    box.querySelector('.cs-reg').addEventListener('click', async () => {
+      const empty = pending.filter((p) => !p.input.value.trim());
+      if (empty.length) {
+        result.className = 'cs-msg cs-result';
+        result.textContent = '名前が空の画像が' + empty.length + '枚あるよ';
+        return;
+      }
+      loadMap();
+      for (const p of pending) {
+        const name = p.input.value.trim();
+        const m = (p.file.name.match(/\.([A-Za-z0-9]+)$/) || [])[1] || (p.file.type.split('/')[1] || 'png');
+        const filename = name + '.' + m.toLowerCase();
+        await putImage(filename, p.file).catch(() => {});
+        revokeUrl(filename);
+        characterMap[name] = filename;
+      }
+      saveJson(KEY_MAP, characterMap);
+      mapField.value = mappingText();
       result.className = 'cs-msg cs-result cs-ok';
-      result.textContent = files.length + '枚の画像を登録したよ';
+      result.textContent = pending.length + '枚の画像を登録して、対応表にも足したよ';
+      clearPending();
       renderList(box);
       refreshAll();
     });
+
+    const close = () => { clearPending(); overlay.remove(); };
+    box.querySelector('.cs-close').addEventListener('click', close);
 
     box.querySelector('.cs-save').addEventListener('click', () => {
       const { result: map, errors } = parseMapping(mapField.value);
