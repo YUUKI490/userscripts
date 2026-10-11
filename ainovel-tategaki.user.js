@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         AIのべりすと 縦書き表示
 // @namespace    yuuki490-ainovel
-// @version      1.2
-// @description  本文（ユーザーのブロックを除く）を縦書きにして、画面にかぶせるパネルで表示する。生成が終わると自動で更新。パネルからAIブロック追加の入力パネルを開ける。文字の大きさと行間はパネルの⚙で変えられる。開くのは画面の仮ボタン（縦）から
+// @version      1.3
+// @description  本文（ユーザーのブロックを除く）を縦書きにして、画面にかぶせるパネルで表示する。生成が終わると自動で更新。パネルからAIブロック追加の入力パネルを開ける。文字の大きさと行間はパネルの⚙で変えられる。鈎括弧で始まる行は折り返した列を括弧1文字分下げる。開くのは画面の仮ボタン（縦）から
 // @match        https://ai-novel.com/*
 // @grant        none
 // @run-at       document-idle
@@ -54,6 +54,8 @@
       padding:12px 1.6em 1.6em 60px; box-sizing:border-box; text-align:start;
     }
     #${SCROLLER_ID} .tg-line, #${SCROLLER_ID} .tg-empty { margin:0; padding:0; font-size:var(--tg-font, ${CONFIG.fontSize}px); line-height:var(--tg-lh, ${CONFIG.lineHeight}); font-family:${CONFIG.fontFamily}; }
+    /* 鈎括弧で始まる行：折り返した列は括弧1文字分だけ下から始める（ぶら下げ）。--tg-hang はキャラ画像も読む */
+    #${SCROLLER_ID} .tg-line.tg-hang { --tg-hang:1em; padding-top:var(--tg-hang); text-indent:calc(-1 * var(--tg-hang)); }
     #${SCROLLER_ID} .tg-tcy { text-combine-upright:all; -webkit-text-combine:horizontal; }
     #${SCROLLER_ID} rt { font-size:.5em; }
     #${SCROLLER_ID} .tg-none { writing-mode:horizontal-tb; color:#999; font-size:15px; padding:24px; }
@@ -119,11 +121,16 @@
     return html;
   }
 
+  // 鈎括弧（「『（〈《【）で始まる行、または「名前「〜」」のように短い名前のあとに括弧が来る行
+  const HANG_RE = /^[\s　]*(?:[^「『（〈《【\s　]{1,12})?[「『（〈《【]/;
+
   function buildHtml(text) {
     if (!text) return '<div class="tg-none">表示できる本文がありません</div>';
-    return text.split('\n').map((line) => (
-      line.trim() ? '<div class="tg-line">' + formatLine(line) + '</div>' : '<div class="tg-empty">　</div>'
-    )).join('');
+    return text.split('\n').map((line) => {
+      if (!line.trim()) return '<div class="tg-empty">　</div>';
+      const cls = HANG_RE.test(line) ? 'tg-line tg-hang' : 'tg-line';
+      return '<div class="' + cls + '">' + formatLine(line) + '</div>';
+    }).join('');
   }
 
   /* ===================== パネル ===================== */
