@@ -1,18 +1,24 @@
 // ==UserScript==
 // @name         AIのべりすと AIブロック追加
 // @namespace    yuuki490-ainovel
-// @version      2.2
-// @description  画面の仮ボタン（➕）で入力パネルを開き、ユーザーブロック＋AIブロック（書き出し入り）を作って「続ける」を押す。テンプレの {章} を章番号に置き換える（次の章／現在の章の続き／断章）
+// @version      2.5
+// @description  画面の仮ボタン（➕）で入力パネルを開き、ユーザーブロック＋AIブロック（書き出し入り）を作って「続ける」を押す。ユーザー欄・AI欄それぞれにテンプレ3つ。テンプレの {章} を章番号に置き換える（次の章／現在の章の続き／断章）
 // @match        https://ai-novel.com/*
-// @grant        none
+// @grant        GM_getValue
+// @grant        GM_setValue
+// @grant        unsafeWindow
 // @run-at       document-idle
 // ==/UserScript==
 
 (function () {
   'use strict';
 
+  // サイト側の関数を呼ぶための窓口（GM_系を使うとwindowが別物になることがあるため）
+  const W = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
+
   const BTN_ID = 'ainovel-add-ai-block-btn';
   const KEY_TEMPLATES = 'ainovel_aiblock_templates';
+  const KEY_USER_TEMPLATES = 'ainovel_aiblock_user_templates';
   const CONTINUE_SELECTOR = '#getcontinuation_chat';
   const QP_SHOW_SELECTOR = '#qp_show_btn';
   const QP_LOAD_SELECTOR = '#qp_load_btn';
@@ -41,7 +47,7 @@
     #aib_mode { margin-left:auto; min-width:64px; background:#fff3c4; border-color:#c9a400; }
     #aib_continue { min-width:110px; background:rgb(205,43,90); border-color:#000; color:#fff; font-size:18px; }
     .aib_tpl { flex:1; font-size:20px; }
-    #aib_tpl_set { flex:none; width:52px; border-radius:50%; font-size:20px; padding:0; }
+    .aib_tpl_gear { flex:none; width:52px; border-radius:50%; font-size:20px; padding:0; }
     #aib_settings { position:absolute; inset:0; background:#fff; border-radius:12px; padding:10px; box-sizing:border-box; display:none; flex-direction:column; gap:8px; }
     #aib_settings.aib-open { display:flex; }
     #aib_settings textarea { flex:1; width:100%; box-sizing:border-box; resize:none; border:1px solid #999; border-radius:10px; padding:8px; font-size:16px; line-height:1.5; }
@@ -52,25 +58,41 @@
   document.head.appendChild(style);
 
   /* ---------- テンプレ保存 ---------- */
-  function loadTemplates() {
+  // 保存先はViolentmonkey側（GM_setValue）。のべりすと本体のlocalStorageの容量を使わない
+  // 初回だけ、前の版がlocalStorageに保存していた中身をコピーする（localStorage側は控えとして残す）
+  function migrateFromLocalStorage() {
+    [KEY_TEMPLATES, KEY_USER_TEMPLATES, KEY_CHAPTER_MODE].forEach((key) => {
+      try {
+        if (GM_getValue(key) !== undefined) return;
+        const old = localStorage.getItem(key);
+        if (old === null) return;
+        if (key === KEY_CHAPTER_MODE) { GM_setValue(key, old); return; }
+        const arr = JSON.parse(old);
+        if (Array.isArray(arr)) GM_setValue(key, arr);
+      } catch (e) { console.warn('[AIブロック追加] 引っ越し失敗', key, e); }
+    });
+  }
+  migrateFromLocalStorage();
+
+  function loadTemplates(key) {
     try {
-      const arr = JSON.parse(localStorage.getItem(KEY_TEMPLATES) || '[]');
-      return [0, 1, 2].map((i) => (typeof arr[i] === 'string' ? arr[i] : ''));
+      const arr = GM_getValue(key, []);
+      return [0, 1, 2].map((i) => (Array.isArray(arr) && typeof arr[i] === 'string' ? arr[i] : ''));
     } catch (_) { return ['', '', '']; }
   }
-  function saveTemplates(arr) {
-    try { localStorage.setItem(KEY_TEMPLATES, JSON.stringify(arr)); } catch (_) {}
+  function saveTemplates(key, arr) {
+    try { GM_setValue(key, arr.slice()); } catch (e) { alert('テンプレを保存できなかったよ'); console.warn(e); }
   }
 
   /* ---------- ブロック作成 ---------- */
   function afterInsert(container) {
     container.querySelectorAll('.data_block').forEach((b, i) => b.setAttribute('data-index', String(i)));
     const calls = [
-      () => window.AttachListeners && window.AttachListeners(),
-      () => window.ApplyIconRules && window.ApplyIconRules(),
-      () => window.VisualChange && window.VisualChange(),
-      () => window.CopyContent && window.CopyContent(),
-      () => window.syncDOMToStorageDebounced && window.syncDOMToStorageDebounced(null),
+      () => W.AttachListeners && W.AttachListeners(),
+      () => W.ApplyIconRules && W.ApplyIconRules(),
+      () => W.VisualChange && W.VisualChange(),
+      () => W.CopyContent && W.CopyContent(),
+      () => W.syncDOMToStorageDebounced && W.syncDOMToStorageDebounced(null),
     ];
     calls.forEach((fn) => { try { fn(); } catch (e) { console.warn('[AIブロック追加]', e); } });
   }
@@ -81,8 +103,8 @@
 
   // 作戦A：サイト内部の関数でブロックを作る（cat は 'User' か 'Assistant'）
   function createBySite(cat, text) {
-    if (typeof window.createDataBlockElement !== 'function') return null;
-    const el = window.createDataBlockElement(0, [{ cat: cat, text: text }]);
+    if (typeof W.createDataBlockElement !== 'function') return null;
+    const el = W.createDataBlockElement(0, [{ cat: cat, text: text }]);
     return el && el.nodeType === 1 ? el : null;
   }
 
@@ -182,7 +204,7 @@
       const main = toNum(intRaw);
       const sub = decRaw ? toNum(decRaw) : null;
       if (Number.isNaN(main)) continue;
-      const title = rest.replace(/^[\s\u3000]+/, '').replace(/[\s\u3000]*[（(]続き[）)][\s\u3000]*$/, '').trim();
+      const title = rest.replace(/^[\s　]+/, '').replace(/[\s　]*[（(]続き[）)][\s　]*$/, '').trim();
       return { main, sub, style, title };
     }
     return null;
@@ -217,12 +239,12 @@
 
   function loadMode() {
     try {
-      const v = localStorage.getItem(KEY_CHAPTER_MODE);
+      const v = GM_getValue(KEY_CHAPTER_MODE);
       return CHAPTER_MODES.some((m) => m.id === v) ? v : 'next';
     } catch (_) { return 'next'; }
   }
   function saveMode(v) {
-    try { localStorage.setItem(KEY_CHAPTER_MODE, v); } catch (_) {}
+    try { GM_setValue(KEY_CHAPTER_MODE, v); } catch (_) {}
   }
 
   /* ---------- パネル ---------- */
@@ -230,10 +252,16 @@
   let userField = null;
   let aiField = null;
   let settings = null;
+  let setTitle = null;
   let setFields = [];
+  let settingsKey = KEY_TEMPLATES; // 設定画面で編集中のテンプレ（AI用かユーザー用か）
   let modeBtn = null;
   let chapterMode = loadMode();
-  let lastChapter = null; // AI欄に入れた章の文字（モード切り替え時に差し替える）
+  let lastChapter = null;     // AI欄に入れた章の文字（モード切り替え時に差し替える）
+  let lastChapterUser = null; // ユーザー欄に入れた章の文字
+  let lastUserTpl = null;     // 最後に押したユーザーテンプレの番号
+  let lastAiTpl = null;       // 最後に押したAIテンプレの番号
+  let refillPending = false;  // 「続ける」のあと、次にパネルを開いたときにテンプレを入れ直す
 
   function buildPanel() {
     overlay = document.createElement('div');
@@ -246,6 +274,12 @@
           <textarea id="aib_user"></textarea>
         </div>
         <div class="aib_row">
+          <button type="button" class="aib_btn aib_tpl" data-kind="user" data-i="0">1</button>
+          <button type="button" class="aib_btn aib_tpl" data-kind="user" data-i="1">2</button>
+          <button type="button" class="aib_btn aib_tpl" data-kind="user" data-i="2">3</button>
+          <button type="button" class="aib_btn aib_tpl_gear" id="aib_utpl_set">⚙</button>
+        </div>
+        <div class="aib_row">
           <button type="button" class="aib_btn" id="aib_qp_show">QP辞書</button>
           <button type="button" class="aib_btn" id="aib_qp_load">QP読込</button>
           <button type="button" class="aib_btn" id="aib_mode"></button>
@@ -256,13 +290,13 @@
           <textarea id="aib_ai"></textarea>
         </div>
         <div class="aib_row">
-          <button type="button" class="aib_btn aib_tpl" data-i="0">1</button>
-          <button type="button" class="aib_btn aib_tpl" data-i="1">2</button>
-          <button type="button" class="aib_btn aib_tpl" data-i="2">3</button>
-          <button type="button" class="aib_btn" id="aib_tpl_set">⚙</button>
+          <button type="button" class="aib_btn aib_tpl" data-kind="ai" data-i="0">1</button>
+          <button type="button" class="aib_btn aib_tpl" data-kind="ai" data-i="1">2</button>
+          <button type="button" class="aib_btn aib_tpl" data-kind="ai" data-i="2">3</button>
+          <button type="button" class="aib_btn aib_tpl_gear" id="aib_tpl_set">⚙</button>
         </div>
         <div id="aib_settings">
-          <div class="aib_set_title">テンプレ設定</div>
+          <div class="aib_set_title" id="aib_set_title">テンプレ設定</div>
           <div class="aib_set_item"><div class="aib_label">テンプレ1</div><textarea data-i="0"></textarea></div>
           <div class="aib_set_item"><div class="aib_label">テンプレ2</div><textarea data-i="1"></textarea></div>
           <div class="aib_set_item"><div class="aib_label">テンプレ3</div><textarea data-i="2"></textarea></div>
@@ -277,6 +311,7 @@
     userField = overlay.querySelector('#aib_user');
     aiField = overlay.querySelector('#aib_ai');
     settings = overlay.querySelector('#aib_settings');
+    setTitle = overlay.querySelector('#aib_set_title');
     setFields = Array.from(settings.querySelectorAll('textarea'));
 
     overlay.querySelector('#aib_close').addEventListener('click', closePanel);
@@ -294,13 +329,7 @@
 
     overlay.querySelectorAll('.aib_tpl').forEach((btn) => {
       btn.addEventListener('click', () => {
-        let t = loadTemplates()[Number(btn.dataset.i)];
-        lastChapter = null;
-        if (t.includes(CHAPTER_MARK)) {
-          lastChapter = chapterText(chapterMode);
-          t = t.split(CHAPTER_MARK).join(lastChapter);
-        }
-        aiField.value = t;
+        applyTemplate(btn.dataset.kind === 'user', Number(btn.dataset.i));
       });
     });
 
@@ -311,28 +340,56 @@
       chapterMode = CHAPTER_MODES[(i + 1) % CHAPTER_MODES.length].id;
       saveMode(chapterMode);
       updateModeButton();
-      // すでにAI欄へ入れた章があれば、新しいモードのものに差し替える
-      if (lastChapter !== null && aiField.value.includes(lastChapter) && lastChapter !== '') {
-        const next = chapterText(chapterMode);
-        aiField.value = aiField.value.replace(lastChapter, next);
-        lastChapter = next;
-      }
+      // すでに欄へ入れた章があれば、新しいモードのものに差し替える
+      lastChapter = swapChapter(aiField, lastChapter);
+      lastChapterUser = swapChapter(userField, lastChapterUser);
     });
 
-    overlay.querySelector('#aib_tpl_set').addEventListener('click', () => {
-      const t = loadTemplates();
-      setFields.forEach((f) => { f.value = t[Number(f.dataset.i)]; });
-      settings.classList.add('aib-open');
-    });
+    overlay.querySelector('#aib_tpl_set').addEventListener('click', () => openSettings(KEY_TEMPLATES, 'AIテンプレ設定'));
+    overlay.querySelector('#aib_utpl_set').addEventListener('click', () => openSettings(KEY_USER_TEMPLATES, 'ユーザーテンプレ設定'));
     overlay.querySelector('#aib_set_save').addEventListener('click', () => {
       const t = ['', '', ''];
       setFields.forEach((f) => { t[Number(f.dataset.i)] = f.value; });
-      saveTemplates(t);
+      saveTemplates(settingsKey, t);
       settings.classList.remove('aib-open');
     });
     overlay.querySelector('#aib_set_cancel').addEventListener('click', () => {
       settings.classList.remove('aib-open');
     });
+  }
+
+  // テンプレを欄に入れる（{章} はその時点の本文から計算する）
+  function applyTemplate(isUser, i) {
+    let t = loadTemplates(isUser ? KEY_USER_TEMPLATES : KEY_TEMPLATES)[i];
+    let ch = null;
+    if (t.includes(CHAPTER_MARK)) {
+      ch = chapterText(chapterMode);
+      t = t.split(CHAPTER_MARK).join(ch);
+    }
+    if (isUser) {
+      lastUserTpl = i;
+      lastChapterUser = ch;
+      userField.value = t;
+    } else {
+      lastAiTpl = i;
+      lastChapter = ch;
+      aiField.value = t;
+    }
+  }
+
+  function swapChapter(field, last) {
+    if (last === null || last === '' || !field.value.includes(last)) return last;
+    const next = chapterText(chapterMode);
+    field.value = field.value.replace(last, next);
+    return next;
+  }
+
+  function openSettings(key, title) {
+    settingsKey = key;
+    setTitle.textContent = title;
+    const t = loadTemplates(key);
+    setFields.forEach((f) => { f.value = t[Number(f.dataset.i)]; });
+    settings.classList.add('aib-open');
   }
 
   function updateModeButton() {
@@ -345,6 +402,12 @@
   function openPanel() {
     if (!overlay) buildPanel();
     settings.classList.remove('aib-open');
+    // 前回「続ける」の前に押していたテンプレを入れ直す（章番号は生成後の本文で計算し直す）
+    if (refillPending) {
+      refillPending = false;
+      if (lastUserTpl !== null) applyTemplate(true, lastUserTpl);
+      if (lastAiTpl !== null) applyTemplate(false, lastAiTpl);
+    }
     overlay.classList.add('aib-open');
   }
 
@@ -357,6 +420,8 @@
     userField.value = '';
     aiField.value = '';
     lastChapter = null;
+    lastChapterUser = null;
+    refillPending = true;
     closePanel();
     // サイト側の保存が追いつくのを少し待ってから「続ける」を押す
     setTimeout(() => {
