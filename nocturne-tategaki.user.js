@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ノクターン縦書きビューア
 // @namespace    yuuki490
-// @version      1.2
+// @version      1.3
 // @description  目次ページ・各話ページで本文を縦書き表示する（背景色・文字色・文字サイズ設定つき）
 // @match        https://novel18.syosetu.com/*
 // @match        https://ncode.syosetu.com/*
@@ -58,13 +58,15 @@
   }
 
   // ---------- 本文 ----------
-  // 半角の数字2桁・!?などを縦中横に
+  // 半角の数字2桁・!?などを縦中横に（あわせて三点リーダーを中央寄せ）
   function tcy(root) {
     const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
     const nodes = [];
     while (walker.nextNode()) nodes.push(walker.currentNode);
     nodes.forEach(n => {
       if (n.parentNode.closest('rt')) return;
+      // 三点リーダー・二点リーダーを縦書き専用の字形に置き換えて真ん中にそろえる
+      n.nodeValue = n.nodeValue.replace(/…/g, '\uFE19').replace(/‥/g, '\uFE30');
       const t = n.nodeValue;
       const re = /(?<![0-9A-Za-z])([0-9]{1,2}|[!?！？]{2})(?![0-9A-Za-z])/g;
       if (!re.test(t)) return;

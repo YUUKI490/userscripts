@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         pixiv小説 縦書きビューア
 // @namespace    yuuki490
-// @version      1.1
-// @description  pixivの小説ページで本文を縦書き表示する（シリーズの前後移動・背景色・文字色・文字サイズ設定つき）
+// @version      1.2
+// @description  pixivの小説ページを開くと自動で縦書き表示する（シリーズの前後移動・背景色・文字色・文字サイズ設定つき）
 // @match        https://www.pixiv.net/*
 // @grant        none
 // ==/UserScript==
@@ -335,10 +335,13 @@
   document.body.appendChild(btn);
 
   // pixivはページ遷移してもリロードしないので、URLを見てボタンの表示を切り替える
+  // 小説ページを開いたら自動で縦書き表示にする（閉じたあとはボタンで開き直せる）
   let lastHref = '';
   setInterval(() => {
     if (location.href === lastHref) return;
     lastHref = location.href;
-    btn.style.display = currentNovelId() ? 'block' : 'none';
+    const id = currentNovelId();
+    btn.style.display = id ? 'block' : 'none';
+    if (id && !btn.disabled) open(btn);
   }, 500);
 })();
