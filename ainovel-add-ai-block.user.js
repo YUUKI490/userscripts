@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         AIのべりすと AIブロック追加
 // @namespace    yuuki490-ainovel
-// @version      2.5
-// @description  画面の仮ボタン（➕）で入力パネルを開き、ユーザーブロック＋AIブロック（書き出し入り）を作って「続ける」を押す。ユーザー欄・AI欄それぞれにテンプレ3つ。テンプレの {章} を章番号に置き換える（次の章／現在の章の続き／断章）
+// @version      2.6
+// @description  画面の仮ボタン（➕）で入力パネルを開き、ユーザーブロック＋AIブロック（書き出し入り）を作って「続ける」を押す。ユーザー欄・AI欄それぞれにテンプレ3つ。テンプレの {章} を章番号に置き換える（次の章／現在の章の続き／断章）。「書く場面」欄の中身を {場面}（または【書く場面】の下）に差し込む
 // @match        https://ai-novel.com/*
 // @grant        GM_getValue
 // @grant        GM_setValue
@@ -24,6 +24,8 @@
   const QP_LOAD_SELECTOR = '#qp_load_btn';
   const KEY_CHAPTER_MODE = 'ainovel_aiblock_chapter_mode';
   const CHAPTER_MARK = '{章}';
+  const SCENE_MARK = '{場面}';
+  const SCENE_HEAD = '【書く場面】';
   const CHAPTER_MODES = [
     { id: 'next', label: '次章' },
     { id: 'cont', label: '続き' },
@@ -41,7 +43,9 @@
     .aib_label { font-size:.75rem; font-weight:700; color:#555; margin-bottom:2px; }
     .aib_area { flex:1; display:flex; flex-direction:column; min-height:0; }
     .aib_area textarea { flex:1; width:100%; box-sizing:border-box; resize:none; border:1px solid #999; border-radius:10px; padding:8px; font-size:16px; line-height:1.6; color:#222; background:#fafafa; }
-    #aib_user_area { flex:1.3; }
+    #aib_scene_area { flex:1.2; }
+    #aib_scene_area textarea { background:#fffbe6; }
+    #aib_user_area { flex:1; }
     .aib_row { display:flex; gap:7px; align-items:stretch; }
     .aib_btn { border:1px solid #888; border-radius:9px; background:#f2f2f2; color:#222; padding:10px 12px; font-size:15px; font-weight:700; cursor:pointer; }
     #aib_mode { margin-left:auto; min-width:64px; background:#fff3c4; border-color:#c9a400; }
@@ -144,6 +148,18 @@
     afterInsert(container);
     setTimeout(() => aiEl.scrollIntoView({ behavior: 'smooth', block: 'end' }), 30);
     return true;
+  }
+
+  /* ---------- 場面の差し込み ---------- */
+  // {場面} があればそこに、なければ【書く場面】の行の下に、場面欄の中身を入れる
+  function insertScene(text, scene) {
+    if (!scene) return text;
+    if (text.includes(SCENE_MARK)) return text.split(SCENE_MARK).join(scene);
+    const lines = text.split('\n');
+    const idx = lines.findIndex((l) => l.trim() === SCENE_HEAD);
+    if (idx < 0) return text;
+    lines.splice(idx + 1, 0, scene);
+    return lines.join('\n');
   }
 
   /* ---------- 章番号 ---------- */
@@ -249,6 +265,7 @@
 
   /* ---------- パネル ---------- */
   let overlay = null;
+  let sceneField = null;
   let userField = null;
   let aiField = null;
   let settings = null;
@@ -269,6 +286,10 @@
     overlay.innerHTML = `
       <div id="aib_box">
         <div id="aib_head"><span>ユーザー＋AI追加</span><button type="button" id="aib_close">×</button></div>
+        <div class="aib_area" id="aib_scene_area">
+          <div class="aib_label">書く場面（{場面} か【書く場面】の下に入る）</div>
+          <textarea id="aib_scene"></textarea>
+        </div>
         <div class="aib_area" id="aib_user_area">
           <div class="aib_label">ユーザー</div>
           <textarea id="aib_user"></textarea>
@@ -308,6 +329,7 @@
       </div>`;
     document.body.appendChild(overlay);
 
+    sceneField = overlay.querySelector('#aib_scene');
     userField = overlay.querySelector('#aib_user');
     aiField = overlay.querySelector('#aib_ai');
     settings = overlay.querySelector('#aib_settings');
@@ -416,7 +438,11 @@
   }
 
   function onContinue() {
-    if (!addBlocks(userField.value, aiField.value)) return;
+    const scene = sceneField.value.trim();
+    const userText = insertScene(userField.value, scene);
+    const aiText = insertScene(aiField.value, scene);
+    if (!addBlocks(userText, aiText)) return;
+    sceneField.value = '';
     userField.value = '';
     aiField.value = '';
     lastChapter = null;
