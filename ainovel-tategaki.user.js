@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         AIのべりすと 縦書き表示
 // @namespace    yuuki490-ainovel
-// @version      1.3
-// @description  本文（ユーザーのブロックを除く）を縦書きにして、画面にかぶせるパネルで表示する。生成が終わると自動で更新。パネルからAIブロック追加の入力パネルを開ける。文字の大きさと行間はパネルの⚙で変えられる。鈎括弧で始まる行は折り返した列を括弧1文字分下げる。開くのは画面の仮ボタン（縦）から
+// @version      1.4
+// @description  本文（ユーザーのブロックを除く）を縦書きにして、画面にかぶせるパネルで表示する。生成が終わると自動で更新。パネルからAIブロック追加の入力パネルを開ける。文字の大きさと行間はパネルの⚙で変えられる。鈎括弧で始まる行は折り返した列を括弧1文字分下げる。生成直後に残る &color(){} の記法は表示しない。本文の生成中はパネルの背景をピンクにする。開くのは画面の仮ボタン（縦）から
 // @match        https://ai-novel.com/*
 // @grant        none
 // @run-at       document-idle
@@ -17,6 +17,7 @@
     lineHeight: 1.9,   // 行間
     fontFamily: '"Noto Serif JP", "Noto Serif CJK JP", "Source Han Serif JP", "Yu Mincho", "YuMincho", "Hiragino Mincho ProN", serif',
     background: '#fbf8f0',
+    generatingBackground: '#fde4ec', // 本文の生成中の背景色
     color: '#222222',
     renderDelay: 300,  // 本文が変わってから作り直すまでの待ち時間(ms)
     pollInterval: 1500, // 開いている間、本文が変わっていないか確かめる間隔(ms)
@@ -35,6 +36,8 @@
   const SET_BOX_ID = 'ainovel-tategaki-setbox';
   const FONT_MIN = 12, FONT_MAX = 36, LH_MIN = 1.2, LH_MAX = 3.0;
   const AIB_BTN_ID = 'ainovel-add-ai-block-btn'; // AIブロック追加の仮ボタン
+  const LOADING_ID = 'loading_anim'; // 生成中に表示されるアニメーション
+  const GENERATING_CLASS = 'tg-generating';
 
   /* ===================== 見た目 ===================== */
   const style = document.createElement('style');
@@ -43,6 +46,7 @@
 
     #${OVERLAY_ID} { display:none; position:fixed; inset:0; width:100vw; height:100vh; height:100dvh; z-index:99985; background:${CONFIG.background}; color:${CONFIG.color}; box-sizing:border-box; }
     body.${OPEN_CLASS} #${OVERLAY_ID} { display:block; }
+    #${OVERLAY_ID}.tg-generating { background:${CONFIG.generatingBackground}; }
     body.${OPEN_CLASS} { overflow:hidden !important; }
 
     #${SCROLLER_ID} {
@@ -83,7 +87,19 @@
       const text = (raw !== null ? raw : (edit.innerText || '')).replace(/\r\n?/g, '\n').replace(/ /g, ' ').replace(/\n+$/, '');
       if (text.trim()) parts.push(text);
     });
-    return cleanText(parts.join('\n'));
+    return cleanText(stripColor(parts.join('\n')));
+  }
+
+  // 生成直後の data-raw-markdown に残る &color(colorAIonce){文字} の記法を、中の文字だけにする
+  function stripColor(text) {
+    if (text.indexOf('&color(') === -1) return text;
+    let prev;
+    do {
+      prev = text;
+      text = text.replace(/&color\([^()]*\)\{([^{}]*)\}/g, '$1');
+    } while (text !== prev);
+    // 閉じ括弧がまだ来ていない途中の記法は、頭の部分だけ消す
+    return text.replace(/&color\([^()]*\)\{/g, '');
   }
 
   // @/* 〜 @*/ のコメントと、@ で始まる行は表示しない
@@ -254,6 +270,19 @@
     });
   }
 
+  /* ===================== 生成中の背景色 ===================== */
+  function isGenerating() {
+    const el = document.getElementById(LOADING_ID);
+    if (!el) return false;
+    const css = window.getComputedStyle(el);
+    return css.display !== 'none' && css.visibility !== 'hidden' && css.opacity !== '0';
+  }
+
+  function updateGenerating() {
+    if (!overlay) return;
+    overlay.classList.toggle(GENERATING_CLASS, isGenerating());
+  }
+
   function scheduleRender() {
     if (!isOpen()) return;
     clearTimeout(renderTimer);
@@ -267,6 +296,7 @@
     buildPanel();
     document.body.classList.add(OPEN_CLASS);
     saveOpen(true);
+    updateGenerating();
     render(true);
   }
 
@@ -314,6 +344,9 @@
     restoreOpen();
     if (isOpen()) render(false);
   }, CONFIG.pollInterval);
+
+  // 生成中かどうかは短い間隔で見て、背景色を切り替える
+  setInterval(() => { if (isOpen()) updateGenerating(); }, 400);
 
   watchContainer();
   ensureOpenButton();
