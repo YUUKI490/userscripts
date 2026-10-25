@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         AIのべりすと 縦書き表示
 // @namespace    yuuki490-ainovel
-// @version      1.4
+// @version      1.5
 // @description  本文（ユーザーのブロックを除く）を縦書きにして、画面にかぶせるパネルで表示する。生成が終わると自動で更新。パネルからAIブロック追加の入力パネルを開ける。文字の大きさと行間はパネルの⚙で変えられる。鈎括弧で始まる行は折り返した列を括弧1文字分下げる。生成直後に残る &color(){} の記法は表示しない。本文の生成中はパネルの背景をピンクにする。開くのは画面の仮ボタン（縦）から
 // @match        https://ai-novel.com/*
 // @grant        none
@@ -90,13 +90,13 @@
     return cleanText(stripColor(parts.join('\n')));
   }
 
-  // 生成直後の data-raw-markdown に残る &color(colorAIonce){文字} の記法を、中の文字だけにする
+  // 生成直後の data-raw-markdown に残る &color(colorAIonce){文字}; の記法を、中の文字だけにする（終わりの ; も消す）
   function stripColor(text) {
     if (text.indexOf('&color(') === -1) return text;
     let prev;
     do {
       prev = text;
-      text = text.replace(/&color\([^()]*\)\{([^{}]*)\}/g, '$1');
+      text = text.replace(/&color\([^()]*\)\{([^{}]*)\};?/g, '$1');
     } while (text !== prev);
     // 閉じ括弧がまだ来ていない途中の記法は、頭の部分だけ消す
     return text.replace(/&color\([^()]*\)\{/g, '');
