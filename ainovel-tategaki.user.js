@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         AIのべりすと 縦書き表示
 // @namespace    yuuki490-ainovel
-// @version      1.5
-// @description  本文（ユーザーのブロックを除く）を縦書きにして、画面にかぶせるパネルで表示する。生成が終わると自動で更新。パネルからAIブロック追加の入力パネルを開ける。文字の大きさと行間はパネルの⚙で変えられる。鈎括弧で始まる行は折り返した列を括弧1文字分下げる。生成直後に残る &color(){} の記法は表示しない。本文の生成中はパネルの背景をピンクにする。開くのは画面の仮ボタン（縦）から
+// @version      1.6
+// @description  本文（ユーザーのブロックを除く）を縦書きにして、画面にかぶせるパネルで表示する。生成が終わると自動で更新。パネルからAIブロック追加の入力パネルを開ける。文字の大きさと行間はパネルの⚙で変えられる。鈎括弧で始まる行は折り返した列を括弧1文字分下げる。生成直後に残る &color(){} の記法は表示しない。本文の生成中はパネルの背景をピンクにする。⚙の中の「最後の生成を消す」で最後のAIブロックとその前の指示ブロックを消せる。⚙の下の→で最後のAIブロックの先頭に飛ぶ。開くのは画面の仮ボタン（縦）から
 // @match        https://ai-novel.com/*
 // @grant        none
 // @run-at       document-idle
@@ -34,6 +34,9 @@
   const KEY_VIEW = 'ainovel_tategaki_view'; // { fontSize, lineHeight }
   const SET_BTN_ID = 'ainovel-tategaki-setbtn';
   const SET_BOX_ID = 'ainovel-tategaki-setbox';
+  const JUMP_BTN_ID = 'ainovel-tategaki-jump';
+  const AI_HEAD_ID = 'ainovel-tategaki-ai-head';
+  const AI_HEAD_MARK = '\u2063'; // 最後のAIブロックの先頭行に付ける見えない印
   const FONT_MIN = 12, FONT_MAX = 36, LH_MIN = 1.2, LH_MAX = 3.0;
   const AIB_BTN_ID = 'ainovel-add-ai-block-btn'; // AIブロック追加の仮ボタン
   const LOADING_ID = 'loading_anim'; // 生成中に表示されるアニメーション
@@ -66,12 +69,15 @@
 
     #${CLOSE_ID} { position:absolute; top:8px; left:8px; z-index:1; width:40px; height:40px; border:none; border-radius:50%; background:rgba(0,0,0,.08); color:#444; font-size:20px; line-height:40px; padding:0; text-align:center; cursor:pointer; }
     #${SET_BTN_ID} { position:absolute; top:56px; left:8px; z-index:1; width:40px; height:40px; border:none; border-radius:50%; background:rgba(0,0,0,.08); color:#444; font-size:20px; line-height:40px; padding:0; text-align:center; cursor:pointer; }
-    #${SET_BOX_ID} { display:none; position:absolute; top:104px; left:8px; z-index:2; writing-mode:horizontal-tb; background:#fff; color:#222; border:1px solid #ccc; border-radius:10px; box-shadow:0 4px 16px rgba(0,0,0,.25); padding:10px 12px; font-family:sans-serif; font-size:14px; }
+    #${JUMP_BTN_ID} { position:absolute; top:104px; left:8px; z-index:1; width:40px; height:40px; border:none; border-radius:50%; background:rgba(0,0,0,.08); color:#444; font-size:20px; line-height:40px; padding:0; text-align:center; cursor:pointer; }
+    #${SET_BOX_ID} { display:none; position:absolute; top:152px; left:8px; z-index:2; writing-mode:horizontal-tb; background:#fff; color:#222; border:1px solid #ccc; border-radius:10px; box-shadow:0 4px 16px rgba(0,0,0,.25); padding:10px 12px; font-family:sans-serif; font-size:14px; }
     #${SET_BOX_ID}.tg-open { display:block; }
     #${SET_BOX_ID} .tg-row { display:flex; align-items:center; gap:8px; margin:4px 0; }
     #${SET_BOX_ID} .tg-name { width:5em; font-weight:700; }
     #${SET_BOX_ID} .tg-val { min-width:3.5em; text-align:center; }
     #${SET_BOX_ID} button { width:40px; height:36px; border:1px solid #888; border-radius:8px; background:#f2f2f2; color:#222; font-size:18px; cursor:pointer; padding:0; }
+    #${SET_BOX_ID} button.tg-del { width:auto; padding:0 12px; font-size:14px; background:#fbe9e7; border-color:#c62828; color:#b71c1c; }
+    #${SET_BOX_ID} button.tg-del:disabled { opacity:.4; }
     #${INPUT_ID} { position:absolute; left:12px; bottom:calc(12px + env(safe-area-inset-bottom, 0px)); z-index:1; height:42px; min-width:100px; padding:6px 14px; border:none; border-radius:21px; background:rgba(0,0,0,.62); color:#fff; font-size:15px; line-height:30px; writing-mode:horizontal-tb; box-sizing:border-box; cursor:pointer; }
   `;
   document.head.appendChild(style);
@@ -82,12 +88,17 @@
     const root = document.getElementById('data_container');
     if (!root) return '';
     const parts = [];
+    let lastAi = -1;
     root.querySelectorAll('.data_edit.plaintext, .data_edit.assistant').forEach((edit) => {
       const raw = edit.getAttribute('data-raw-markdown');
-      const text = (raw !== null ? raw : (edit.innerText || '')).replace(/\r\n?/g, '\n').replace(/ /g, ' ').replace(/\n+$/, '');
-      if (text.trim()) parts.push(text);
+      const text = cleanText(stripColor((raw !== null ? raw : (edit.innerText || '')).replace(/\r\n?/g, '\n').replace(/ /g, ' ').replace(/\n+$/, '')));
+      if (!text.trim()) return;
+      parts.push(text);
+      if (edit.classList.contains('assistant')) lastAi = parts.length - 1;
     });
-    return cleanText(stripColor(parts.join('\n')));
+    // 最後のAIブロックの先頭行に印を付ける（→ボタンで飛ぶ先）
+    if (lastAi >= 0) parts[lastAi] = AI_HEAD_MARK + parts[lastAi];
+    return parts.join('\n');
   }
 
   // 生成直後の data-raw-markdown に残る &color(colorAIonce){文字}; の記法を、中の文字だけにする（終わりの ; も消す）
@@ -143,9 +154,11 @@
   function buildHtml(text) {
     if (!text) return '<div class="tg-none">表示できる本文がありません</div>';
     return text.split('\n').map((line) => {
-      if (!line.trim()) return '<div class="tg-empty">　</div>';
+      let id = '';
+      if (line.startsWith(AI_HEAD_MARK)) { line = line.slice(AI_HEAD_MARK.length); id = ' id="' + AI_HEAD_ID + '"'; }
+      if (!line.trim()) return '<div class="tg-empty"' + id + '>　</div>';
       const cls = HANG_RE.test(line) ? 'tg-line tg-hang' : 'tg-line';
-      return '<div class="' + cls + '">' + formatLine(line) + '</div>';
+      return '<div class="' + cls + '"' + id + '>' + formatLine(line) + '</div>';
     }).join('');
   }
 
@@ -201,14 +214,103 @@
     box.id = SET_BOX_ID;
     box.innerHTML = `
       <div class="tg-row"><span class="tg-name">文字</span><button type="button" data-k="font" data-d="-1">−</button><span class="tg-val" data-v="font"></span><button type="button" data-k="font" data-d="1">＋</button></div>
-      <div class="tg-row"><span class="tg-name">行間</span><button type="button" data-k="lh" data-d="-1">−</button><span class="tg-val" data-v="lh"></span><button type="button" data-k="lh" data-d="1">＋</button></div>`;
+      <div class="tg-row"><span class="tg-name">行間</span><button type="button" data-k="lh" data-d="-1">−</button><span class="tg-val" data-v="lh"></span><button type="button" data-k="lh" data-d="1">＋</button></div>
+      <div class="tg-row"><span class="tg-name">最後の生成</span><button type="button" class="tg-del" data-k="del">消す（AI＋指示）</button></div>`;
     btn.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); box.classList.toggle('tg-open'); });
     box.addEventListener('click', (e) => {
       e.stopPropagation();
       const b = e.target.closest('button[data-k]');
-      if (b) changeView(b.dataset.k, Number(b.dataset.d));
+      if (!b) return;
+      if (b.dataset.k === 'del') { deleteLastGeneration(b); return; }
+      changeView(b.dataset.k, Number(b.dataset.d));
     });
     return [btn, box];
+  }
+
+  /* ===================== 最後の生成（AIブロック＋指示ブロック）を消す ===================== */
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const getBlocks = () => Array.from(document.querySelectorAll('#data_container .data_block'));
+
+  function blockCategory(block) {
+    const cat = block.querySelector('.category');
+    const c = cat && cat.getAttribute('data-category');
+    if (c) return c;
+    const edit = block.querySelector('.data_edit');
+    if (!edit) return '';
+    if (edit.classList.contains('assistant')) return 'assistant';
+    if (edit.classList.contains('user')) return 'user';
+    return 'plaintext';
+  }
+
+  function isVisible(el) {
+    if (!el) return false;
+    const css = window.getComputedStyle(el);
+    return css.display !== 'none' && css.visibility !== 'hidden' && css.opacity !== '0';
+  }
+
+  async function clickDialogOkIfShown() {
+    const start = Date.now();
+    while (Date.now() - start < 1500) {
+      const dlg = document.getElementById('dialog_box');
+      if (dlg && (dlg.open || isVisible(dlg))) {
+        const ok = document.getElementById('dialog_btn_ok');
+        if (ok) { ok.click(); return true; }
+      }
+      await sleep(100);
+    }
+    return false;
+  }
+
+  // のべりすとのゴミ箱ボタンを押して、ブロックが減るまで待つ
+  async function deleteBlock(index) {
+    const blocks = getBlocks();
+    const block = blocks[index];
+    if (!block) return false;
+    const trash = block.querySelector('.icon_trash_witag');
+    if (!trash) return false;
+    const before = blocks.length;
+    trash.click();
+    await clickDialogOkIfShown();
+    const start = Date.now();
+    while (getBlocks().length >= before) {
+      if (Date.now() - start > 5000) return false;
+      await sleep(200);
+    }
+    return true;
+  }
+
+  async function deleteLastGeneration(button) {
+    if (isGenerating()) { alert('本文の生成が終わってから押してね'); return; }
+    const blocks = getBlocks();
+    const aiIndex = blocks.length - 1;
+    if (aiIndex < 0 || blockCategory(blocks[aiIndex]) !== 'assistant') { alert('本文の最後がAIブロックじゃないので消さないよ'); return; }
+    const userIndex = aiIndex - 1;
+    const hasUser = userIndex >= 0 && blockCategory(blocks[userIndex]) === 'user';
+    const edit = blocks[aiIndex].querySelector('.data_edit');
+    const head = ((edit && edit.getAttribute('data-raw-markdown')) || '').trim().split('\n')[0];
+    const shown = Array.from(head).slice(0, 30).join('');
+    if (!confirm('最後のAIブロック' + (hasUser ? 'と、その前の指示ブロック' : '') + 'を消すよ。いい？\n\n' + shown + '…')) return;
+    button.disabled = true;
+    try {
+      // 後ろから消す（先にAIブロック、次に指示ブロック）
+      const okAi = await deleteBlock(aiIndex);
+      const okUser = hasUser ? await deleteBlock(userIndex) : true;
+      if (!okAi || !okUser) alert('ブロックの削除が一部できなかったよ');
+    } finally {
+      button.disabled = false;
+      lastText = null;
+      render(true);
+    }
+  }
+
+  /* ===================== 最後のAIブロックの先頭に飛ぶ ===================== */
+  function jumpToAiHead() {
+    if (!scroller) return;
+    const el = document.getElementById(AI_HEAD_ID);
+    if (!el) return;
+    // 縦書き（右から左）では block の先頭＝右端。その行が右端に来るように寄せる
+    el.scrollIntoView({ block: 'start', inline: 'nearest' });
+    scroller.scrollLeft = Math.min(0, scroller.scrollLeft + view.fontSize * 1.6);
   }
 
   function buildPanel() {
@@ -241,9 +343,18 @@
 
     const [setBtn, setBox] = buildSettings();
 
+    const jump = document.createElement('button');
+    jump.id = JUMP_BTN_ID;
+    jump.type = 'button';
+    jump.textContent = '→';
+    jump.title = '最後のAIブロックの先頭へ';
+    jump.setAttribute('aria-label', '最後のAIブロックの先頭へ');
+    jump.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); jumpToAiHead(); });
+
     overlay.appendChild(scroller);
     overlay.appendChild(close);
     overlay.appendChild(setBtn);
+    overlay.appendChild(jump);
     overlay.appendChild(setBox);
     overlay.appendChild(input);
     document.body.appendChild(overlay);
