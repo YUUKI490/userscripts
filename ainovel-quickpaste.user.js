@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         AIのべりすと QuickPaste
 // @namespace    ainovelist-quickpaste
-// @version      2.4.1
+// @version      2.5
 // @description  TXTのキャラ・用語一覧から、単体または複数の名前を入力欄へ挿入します。洗脳状態のキャラは色分け表示します
 // @match        https://ai-novel.com/*
 // @grant        none
@@ -132,10 +132,11 @@
         lastSelectionEnd = target.selectionEnd;
     }
 
-    /* 入力パネル（AIブロック追加）が開いているときはパネルの「書く場面」欄、閉じているときは今まで通りの入力欄 */
+    /* 清書補助パネルが開いていれば「起きること」欄、入力パネル（AIブロック追加）が開いていれば「書く場面」欄、どちらも閉じていれば今まで通りの入力欄 */
     function getInsertTarget() {
+        const helperField = document.querySelector('#aib_overlay.aib-open #aib_helper.aib-open #aib_h_events');
         const panelField = document.querySelector('#aib_overlay.aib-open #aib_scene');
-        return panelField || document.querySelector(TARGET_SELECTOR);
+        return helperField || panelField || document.querySelector(TARGET_SELECTOR);
     }
 
     function insertIntoChat(text) {
