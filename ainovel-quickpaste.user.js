@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         AIのべりすと QuickPaste
 // @namespace    ainovelist-quickpaste
-// @version      2.5
-// @description  TXTのキャラ・用語一覧から、単体または複数の名前を入力欄へ挿入します。洗脳状態のキャラは色分け表示します
+// @version      2.6
+// @description  TXTのキャラ・用語一覧から、単体または複数の名前を入力欄へ挿入します。洗脳状態のキャラは色分け表示します。一覧の「本文から追加」でプチボット「新キャラ抽出」に本文を読ませ、辞書にない人物・用語を確認してから追加できます（TXT保存も可）
 // @match        https://ai-novel.com/*
 // @grant        none
 // @run-at       document-idle
@@ -16,6 +16,11 @@
     const KEY_HIGHLIGHTS = 'ainovelist_quickpaste_highlights';
     /* Grok文章コピー側が localStorage に書き出す洗脳状態一覧（雷花=洗脳状態 形式） */
     const KEY_BRAINWASH = 'ainovel_brainwash_states';
+    /* 本文から追加：プチボットの名前に含まれる文字と、プロンプトの目印 */
+    const EXTRACT_BOT_NAME = '新キャラ抽出';
+    const EXTRACT_PLACEHOLDER = '（ここに登録済み一覧を貼り付ける）';
+    const BOT_WAIT_TIMEOUT = 180000;
+    const BOT_STABLE_MS = 4000;
     const TARGET_SELECTOR = '#chat_field';
     const DEFAULT_SEPARATOR = 'と';
 
@@ -60,6 +65,17 @@
         #qp_clear { background:#eee; color:#222; }
         #qp_clear_highlights { background:#ffe0b2; color:#222; }
         .qp_page_button { margin-left:4px; }
+        #qp_extract { margin-left:auto; border:1px solid #2d6a4f; border-radius:8px; background:#e6f4ea; color:#1b4332; font-size:.8rem; font-weight:700; padding:5px 10px; cursor:pointer; }
+        #qp_extract:disabled { opacity:.5; }
+        #qp_ex_overlay { position:fixed; inset:0; z-index:1000000; background:rgba(0,0,0,.55); display:flex; align-items:center; justify-content:center; padding:12px; box-sizing:border-box; }
+        #qp_ex_box { width:min(520px,100%); max-height:88vh; display:flex; flex-direction:column; gap:8px; padding:12px; box-sizing:border-box; color:#222; background:#fff; border-radius:12px; box-shadow:0 8px 32px rgba(0,0,0,.45); font-family:sans-serif; }
+        #qp_ex_box .qp_ex_title { font-weight:700; }
+        #qp_ex_box .qp_ex_small { font-size:.78rem; color:#666; }
+        #qp_ex_box textarea { flex:1; min-height:200px; width:100%; box-sizing:border-box; resize:none; border:1px solid #999; border-radius:10px; padding:8px; font-size:15px; line-height:1.6; }
+        #qp_ex_box .qp_ex_row { display:flex; gap:7px; }
+        #qp_ex_box .qp_ex_row button { flex:1; border:1px solid #888; border-radius:9px; background:#f2f2f2; color:#222; padding:10px 8px; font-size:15px; font-weight:700; cursor:pointer; }
+        #qp_ex_box .qp_ex_add { background:#2196f3; border-color:#1976d2; color:#fff; }
+        #qp_toast { position:fixed; left:50%; bottom:70px; transform:translateX(-50%); z-index:1000001; max-width:90vw; padding:8px 14px; border-radius:10px; color:#fff; font-size:14px; font-family:sans-serif; box-shadow:0 2px 10px rgba(0,0,0,.4); pointer-events:none; transition:opacity .3s; background:rgba(40,40,40,.92); }
         @media (max-width:450px) { #qp_box { max-height:92vh; } #qp_list { padding:8px; } .qp_item { padding:9px; } }
     `;
     document.head.appendChild(style);
@@ -221,7 +237,13 @@
         close.id = 'qp_close';
         close.textContent = '×';
         close.addEventListener('click', () => overlay.remove());
-        header.append(title, close);
+        const extract = document.createElement('button');
+        extract.type = 'button';
+        extract.id = 'qp_extract';
+        extract.textContent = '本文から追加';
+        extract.title = 'プチボット「' + EXTRACT_BOT_NAME + '」に本文を読ませて、辞書にない名前を探す';
+        extract.addEventListener('click', () => extractFromStory(extract));
+        header.append(title, extract, close);
 
         const list = document.createElement('div');
         list.id = 'qp_list';
@@ -353,6 +375,219 @@
         actions.append(paste, clear);
         tools.appendChild(actions);
         return tools;
+    }
+
+    /* ===================== 本文から追加（プチボット） ===================== */
+    const sleep = ms => new Promise(r => setTimeout(r, ms));
+    let extracting = false;
+
+    function toast(msg, color) {
+        let el = document.getElementById('qp_toast');
+        if (!el) { el = document.createElement('div'); el.id = 'qp_toast'; document.body.appendChild(el); }
+        el.textContent = msg;
+        el.style.background = color || 'rgba(40,40,40,.92)';
+        el.style.opacity = '1';
+        clearTimeout(el._t);
+        el._t = setTimeout(() => { el.style.opacity = '0'; }, 4000);
+    }
+
+    function fireInput(el) {
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+        el.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+
+    function persistPetitbots() {
+        try {
+            if (typeof window.HandlePetitbotEditorPersist === 'function') window.HandlePetitbotEditorPersist(true);
+            else if (typeof window.PersistPetitbotCurrentMode === 'function') window.PersistPetitbotCurrentMode();
+        } catch (_) {}
+    }
+
+    /* 目印がそろっているプロンプトを控えておき、目印が消えていたら控えから戻します */
+    function ensureTemplate(promptEl, botName) {
+        const key = 'ainovel-petitbot-template:' + botName;
+        if (promptEl.value.includes(EXTRACT_PLACEHOLDER)) {
+            try { localStorage.setItem(key, promptEl.value); } catch (_) {}
+            return true;
+        }
+        let saved = null;
+        try { saved = localStorage.getItem(key); } catch (_) {}
+        if (saved && saved.includes(EXTRACT_PLACEHOLDER)) {
+            promptEl.value = saved;
+            fireInput(promptEl);
+            persistPetitbots();
+            return true;
+        }
+        return false;
+    }
+
+    function getBotName(i) {
+        const input = document.getElementById('petitbot_name' + i);
+        const disp = document.getElementById('petitbot_name_display' + i);
+        return ((input && input.value) || (disp && disp.textContent) || '').trim();
+    }
+    function findBot(keyword) {
+        for (let i = 0; i < 100; i++) {
+            if (!document.getElementById('petitbotarea' + i)) continue;
+            if (getBotName(i).includes(keyword)) return i;
+        }
+        return -1;
+    }
+
+    /* 実行ボタンを押す一瞬だけプロンプトを差し替えて、押した直後に元へ戻します（差し替えた中身は保存されません） */
+    async function runBot(i, promptEl, tempText) {
+        const out = document.getElementById('petitbot_output_assistant');
+        const info = document.getElementById('petitbot_output_info');
+        if (!out) throw new Error('プチボットの出力欄が見つからないよ');
+        await sleep(1500);
+        const area = document.getElementById('petitbotarea' + i);
+        const execBtn = area && area.querySelector('.btn-petitbot-chat');
+        if (!execBtn) throw new Error('プチボットの実行ボタンが見つからないよ');
+        const waitStart = Date.now();
+        while (execBtn.disabled || execBtn.getAttribute('aria-disabled') === 'true') {
+            if (Date.now() - waitStart > 30000) throw new Error('プチボットの実行ボタンが押せる状態にならないよ');
+            await sleep(500);
+        }
+        const beforeInfo = info ? info.textContent : '';
+        const beforeVal = out.value;
+        const livePrompt = document.getElementById('petitbot_prompt' + i) || promptEl;
+        const orig = livePrompt.value;
+        livePrompt.value = tempText;
+        try { execBtn.click(); } finally { livePrompt.value = orig; }
+
+        const start = Date.now();
+        while (true) {
+            await sleep(500);
+            if ((info && info.textContent !== beforeInfo) || out.value !== beforeVal) break;
+            if (Date.now() - start > BOT_WAIT_TIMEOUT) throw new Error('プチボットの出力が返ってこなかったよ');
+        }
+        let last = out.value;
+        let lastChange = Date.now();
+        while (true) {
+            await sleep(500);
+            if (out.value !== last) {
+                last = out.value;
+                lastChange = Date.now();
+            } else if (info) {
+                if (!info.textContent.includes('生成中') && info.textContent !== beforeInfo && Date.now() - lastChange >= 1500) break;
+            } else if (last.trim() && Date.now() - lastChange >= BOT_STABLE_MS) {
+                break;
+            }
+            if (Date.now() - start > BOT_WAIT_TIMEOUT) throw new Error('プチボットの出力が終わらなかったよ');
+        }
+        return out.value.trim();
+    }
+
+    /* プチボットの出力から「名前(説明)」の行だけ拾い、辞書にある名前は除きます */
+    function pickNewEntries(output, existing) {
+        const have = new Set(existing.map(item => normalizeName(item.name)));
+        const seen = new Set();
+        const lines = [];
+        output.split(/\r?\n/).forEach(raw => {
+            let line = raw.trim().replace(/^[・\-－−•*\d.、\s]+/, '').replace(/（/g, '(').replace(/）/g, ')');
+            if (!line || /^なし$/.test(line) || /^[【\[]/.test(line)) return;
+            const open = line.indexOf('(');
+            const close = line.lastIndexOf(')');
+            const name = (open > 0 && close > open ? line.slice(0, open) : line).trim();
+            const desc = open > 0 && close > open ? line.slice(open + 1, close).trim() : '';
+            if (!name || name.length > 30) return;
+            const key = normalizeName(name);
+            if (have.has(key) || seen.has(key)) return;
+            seen.add(key);
+            lines.push(desc ? `${name}(${desc})` : name);
+        });
+        return lines;
+    }
+
+    function downloadText(text, filename) {
+        const blob = new Blob([text], { type: 'text/plain' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url; a.download = filename || 'quickpaste.txt';
+        document.body.appendChild(a); a.click(); a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+    }
+
+    function mergedText(addLines) {
+        const base = loadText().replace(/\s+$/, '');
+        return (base ? base + '\n' : '') + addLines.join('\n') + '\n';
+    }
+
+    function showExtractConfirm(lines) {
+        document.querySelector('#qp_ex_overlay')?.remove();
+        const overlay = document.createElement('div');
+        overlay.id = 'qp_ex_overlay';
+        const box = document.createElement('div');
+        box.id = 'qp_ex_box';
+        const title = document.createElement('div');
+        title.className = 'qp_ex_title';
+        title.textContent = `本文から見つかった新しい名前（${lines.length}件）`;
+        const small = document.createElement('div');
+        small.className = 'qp_ex_small';
+        small.textContent = '1行1つ「名前(簡易説明)」。要らない行は消して、説明は直してOK。「追加」で辞書の末尾に入ります。「TXTで保存」は追加後の辞書をファイルにします（元のTXTは変わらないので、読み直すと追加分が消えます）';
+        const ta = document.createElement('textarea');
+        ta.value = lines.join('\n');
+        const row = document.createElement('div');
+        row.className = 'qp_ex_row';
+        const getLines = () => ta.value.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+        const add = document.createElement('button');
+        add.type = 'button'; add.className = 'qp_ex_add'; add.textContent = '辞書に追加';
+        add.addEventListener('click', () => {
+            const ls = getLines();
+            if (!ls.length) { toast('追加する行がないよ'); return; }
+            saveText(mergedText(ls), loadFileName());
+            overlay.remove();
+            toast(`${ls.length}件を辞書に追加したよ`, 'rgba(45,138,52,.95)');
+            showMenu();
+        });
+        const save = document.createElement('button');
+        save.type = 'button'; save.textContent = 'TXTで保存';
+        save.addEventListener('click', () => {
+            const ls = getLines();
+            downloadText(mergedText(ls), loadFileName() || 'quickpaste.txt');
+        });
+        const cancel = document.createElement('button');
+        cancel.type = 'button'; cancel.textContent = 'キャンセル';
+        cancel.addEventListener('click', () => overlay.remove());
+        row.append(add, save, cancel);
+        box.append(title, small, ta, row);
+        overlay.appendChild(box);
+        document.body.appendChild(overlay);
+    }
+
+    async function extractFromStory(button) {
+        if (extracting) return;
+        extracting = true;
+        if (button) button.disabled = true;
+        let promptEl = null;
+        let originalPrompt = null;
+        try {
+            const loading = document.getElementById('loading_anim');
+            if (loading && window.getComputedStyle(loading).display !== 'none') throw new Error('本文の生成が終わってから押してね');
+            const idx = findBot(EXTRACT_BOT_NAME);
+            if (idx < 0) throw new Error('「' + EXTRACT_BOT_NAME + '」のプチボットが見つからないよ');
+            const sel = document.getElementById('petitbot_output' + idx);
+            if (!sel || sel.value !== 'output_petitbot') throw new Error('プチボットの出力先を「プチボット専用欄」にしてね');
+            promptEl = document.getElementById('petitbot_prompt' + idx);
+            if (!promptEl || !ensureTemplate(promptEl, getBotName(idx))) throw new Error('プロンプトに目印「' + EXTRACT_PLACEHOLDER + '」がないよ');
+
+            const existing = parseCharacters(loadText());
+            const listText = existing.length ? existing.map(item => item.name).join('、') : '（まだなし）';
+            toast('本文から新しい名前を探してるよ…');
+            originalPrompt = promptEl.value;
+            const filled = originalPrompt.replace(EXTRACT_PLACEHOLDER, listText);
+            let result;
+            try { result = await runBot(idx, promptEl, filled); } finally { promptEl.value = originalPrompt; originalPrompt = null; }
+            const lines = pickNewEntries(result || '', existing);
+            if (!lines.length) { toast('新しい名前は見つからなかったよ'); return; }
+            showExtractConfirm(lines);
+        } catch (e) {
+            toast(e.message || String(e), 'rgba(204,0,0,.95)');
+        } finally {
+            if (originalPrompt !== null && promptEl) promptEl.value = originalPrompt;
+            if (button) button.disabled = false;
+            extracting = false;
+        }
     }
 
     function triggerFileLoad() {
