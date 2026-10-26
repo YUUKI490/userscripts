@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         AIのべりすと AIブロック追加
 // @namespace    yuuki490-ainovel
-// @version      2.7.1
-// @description  画面の仮ボタン（➕）で入力パネルを開き、ユーザーブロック＋AIブロック（書き出し入り）を作って「続ける」を押す。ユーザー欄・AI欄それぞれにテンプレ3つ。テンプレの {章} を章番号に置き換える（次の章／現在の章の続き／断章）。「書く場面」欄の中身を {場面}（または【書く場面】の下）に差し込む。場面欄の「書く」で清書補助パネルを開き、視点（プルダウン）・主に喋る（タップで選ぶ）・冒頭・終わり・配分・やらないこと・起きることを埋めて「清書」を押すと、プチボット「指示清書」に通した結果を場面欄に入れる
+// @version      2.8
+// @description  画面の仮ボタン（➕）で入力パネルを開き、ユーザーブロック＋AIブロック（書き出し入り）を作って「続ける」を押す。ユーザー欄・AI欄それぞれにテンプレ3つ。テンプレの {章} を章番号に置き換える（次の章／現在の章の続き／断章）。「書く場面」欄の中身を {場面}（または【書く場面】の下）に差し込む。場面欄の「書く」で清書補助パネルを開き、視点（プルダウン）・主に喋る（タップで選ぶ）・冒頭・終わり・配分（プルダウン）・テンポ（プルダウン）・配分メモ・やらないこと・起きることを埋めて「清書」を押すと、プチボット「指示清書」に通した結果を場面欄に入れる
 // @match        https://ai-novel.com/*
 // @grant        GM_getValue
 // @grant        GM_setValue
@@ -34,6 +34,8 @@
   const BOT_WAIT_TIMEOUT = 180000;
   const BOT_STABLE_MS = 4000;
   // 辞書の説明にこの言葉が入っていれば人物らしいとみなし、プルダウンの上に並べる
+  const RATIO_OPTIONS = ['会話多め', '半々', '描写多め', '心情多め（内面の独白を厚く）'];
+  const TEMPO_OPTIONS = ['じっくり（一つの出来事を丁寧に）', '普通', 'テンポよく（出来事を多めに進める）', '戦闘・アクション中心'];
   const PERSON_RE = /主人公|ヒロイン|女性|男性|女の子|男の子|少女|少年|歳|才|年生|姉|妹|兄|弟|母|父|娘|息子|先生|教師|生徒|部長|会長|メイド|騎士|聖女|勇者|魔王|王女|王子|女王|国王|巫女|隊員|隊長|幹部|社長|店長|友人|親友|幼馴染|クラスメイト|同級生|先輩|後輩|彼女|彼氏|妻|夫|人間|女|男/;
   const CHAPTER_MODES = [
     { id: 'next', label: '次章' },
@@ -348,7 +350,9 @@
           <div class="aib_h_row"><span class="aib_h_name">主に喋る</span><div id="aib_h_speakers"></div></div>
           <div class="aib_h_row"><span class="aib_h_name">冒頭はここから</span><input type="text" id="aib_h_start"></div>
           <div class="aib_h_row"><span class="aib_h_name">最後はこの状態</span><input type="text" id="aib_h_end"></div>
-          <div class="aib_h_row"><span class="aib_h_name">配分</span><input type="text" id="aib_h_ratio" placeholder="会話多め／前半〜後半〜"></div>
+          <div class="aib_h_row"><span class="aib_h_name">配分</span><select id="aib_h_ratio"></select></div>
+          <div class="aib_h_row"><span class="aib_h_name">テンポ</span><select id="aib_h_tempo"></select></div>
+          <div class="aib_h_row"><span class="aib_h_name">配分メモ</span><input type="text" id="aib_h_memo" placeholder="前半は〜、後半は〜"></div>
           <div class="aib_h_row"><span class="aib_h_name">やらないこと</span><input type="text" id="aib_h_avoid"></div>
           <div id="aib_h_events_area">
             <div class="aib_label">起きること（1行1つ。QP辞書からも貼れる）</div>
@@ -431,6 +435,8 @@
       start: overlay.querySelector('#aib_h_start'),
       end: overlay.querySelector('#aib_h_end'),
       ratio: overlay.querySelector('#aib_h_ratio'),
+      tempo: overlay.querySelector('#aib_h_tempo'),
+      memo: overlay.querySelector('#aib_h_memo'),
       avoid: overlay.querySelector('#aib_h_avoid'),
       events: overlay.querySelector('#aib_h_events'),
       status: overlay.querySelector('#aib_h_status'),
@@ -448,7 +454,7 @@
       b.classList.toggle('aib-on');
       saveHelper();
     });
-    ['pov', 'start', 'end', 'ratio', 'avoid', 'events'].forEach((k) => helperFields[k].addEventListener('change', saveHelper));
+    ['pov', 'start', 'end', 'ratio', 'tempo', 'memo', 'avoid', 'events'].forEach((k) => helperFields[k].addEventListener('change', saveHelper));
     helperFields.polish.addEventListener('click', polishToScene);
   }
 
@@ -469,7 +475,7 @@
     const v = {
       pov: f.pov.value,
       speakers: Array.from(f.speakers.querySelectorAll('button.aib-on')).map((b) => b.dataset.name),
-      start: f.start.value, end: f.end.value, ratio: f.ratio.value, avoid: f.avoid.value, events: f.events.value,
+      start: f.start.value, end: f.end.value, ratio: f.ratio.value, tempo: f.tempo.value, memo: f.memo.value, avoid: f.avoid.value, events: f.events.value,
     };
     try { GM_setValue(KEY_HELPER, v); } catch (_) {}
   }
@@ -504,9 +510,15 @@
       ? names.map((n) => '<button type="button" data-name="' + escapeHtml(n).replace(/"/g, '&quot;') + '"' + (on.has(n) ? ' class="aib-on"' : '') + '>' + escapeHtml(n) + '</button>').join('')
       : '<span class="aib_h_none">QuickPasteの辞書がまだ読み込まれてないよ（QP読込）</span>';
 
+    const fillSelect = (sel, opts, val) => {
+      sel.innerHTML = '<option value="">（なし）</option>' + opts.map((o) => '<option>' + escapeHtml(o) + '</option>').join('');
+      sel.value = opts.includes(val) ? val : '';
+    };
+    fillSelect(f.ratio, RATIO_OPTIONS, saved.ratio);
+    fillSelect(f.tempo, TEMPO_OPTIONS, saved.tempo);
+    f.memo.value = saved.memo || '';
     f.start.value = saved.start || '';
     f.end.value = saved.end || '';
-    f.ratio.value = saved.ratio || '';
     f.avoid.value = saved.avoid || '';
     f.events.value = saved.events || '';
     f.status.textContent = '';
@@ -522,7 +534,9 @@
     if (speakers.length) lines.push('主に喋る：' + speakers.join('、'));
     if (f.start.value.trim()) lines.push('冒頭はここから：' + f.start.value.trim());
     if (f.end.value.trim()) lines.push('最後はこの状態で終わる：' + f.end.value.trim());
-    if (f.ratio.value.trim()) lines.push('配分：' + f.ratio.value.trim());
+    if (f.ratio.value) lines.push('配分：' + f.ratio.value);
+    if (f.tempo.value) lines.push('テンポ：' + f.tempo.value);
+    if (f.memo.value.trim()) lines.push('配分メモ：' + f.memo.value.trim());
     if (f.avoid.value.trim()) lines.push('やらないこと：' + f.avoid.value.trim());
     const events = f.events.value.split('\n').map((l) => l.trim()).filter(Boolean).map((l) => (/^[・\-－−•*]/.test(l) ? '・' + l.replace(/^[・\-－−•*]\s*/, '') : '・' + l));
     if (events.length) lines.push('起きること：', ...events);
@@ -659,7 +673,9 @@
 
       sceneField.value = result;
       fireInput(sceneField);
-      // 起きることだけ空にして、視点などは次回のために残す
+      // 冒頭・終わり・起きることは毎回空にして、視点などは次回のために残す
+      helperFields.start.value = '';
+      helperFields.end.value = '';
       helperFields.events.value = '';
       saveHelper();
       setStatus('場面欄に入れたよ', '#2d8a34');
