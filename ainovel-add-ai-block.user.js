@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         AIのべりすと AIブロック追加
 // @namespace    yuuki490-ainovel
-// @version      2.7
+// @version      2.7.1
 // @description  画面の仮ボタン（➕）で入力パネルを開き、ユーザーブロック＋AIブロック（書き出し入り）を作って「続ける」を押す。ユーザー欄・AI欄それぞれにテンプレ3つ。テンプレの {章} を章番号に置き換える（次の章／現在の章の続き／断章）。「書く場面」欄の中身を {場面}（または【書く場面】の下）に差し込む。場面欄の「書く」で清書補助パネルを開き、視点（プルダウン）・主に喋る（タップで選ぶ）・冒頭・終わり・配分・やらないこと・起きることを埋めて「清書」を押すと、プチボット「指示清書」に通した結果を場面欄に入れる
 // @match        https://ai-novel.com/*
 // @grant        GM_getValue
@@ -622,6 +622,15 @@
     return out.value.trim();
   }
 
+  // 先頭にある【書く場面】の行（と、その前後の空行）を取る
+  function stripSceneHead(text) {
+    const lines = text.split('\n');
+    while (lines.length && !lines[0].trim()) lines.shift();
+    if (lines.length && lines[0].trim().replace(/[\s　:：]+$/, '') === SCENE_HEAD) lines.shift();
+    while (lines.length && !lines[0].trim()) lines.shift();
+    return lines.join('\n').trim();
+  }
+
   async function polishToScene() {
     if (polishing) return;
     const bullets = buildBulletText();
@@ -645,6 +654,8 @@
       let result;
       try { result = await runBot(idx, promptEl, filled); } finally { promptEl.value = originalPrompt; originalPrompt = null; }
       if (!result) throw new Error('清書の結果が空だったよ');
+      // 先頭の【書く場面】の見出しは取る（テンプレ側の【書く場面】の下に入るので二重になる）
+      result = stripSceneHead(result);
 
       sceneField.value = result;
       fireInput(sceneField);
