@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         漫画吹き出し翻訳（Claude API）
 // @namespace    yuuki490-manga-translate
-// @version      1.0.0
+// @version      1.0.1
 // @description  有効にしたサイトの漫画画像の吹き出しをClaude APIで日本語に訳して、画像の上に重ねて表示します
 // @match        *://*/*
 // @grant        GM_xmlhttpRequest
@@ -240,14 +240,14 @@
 - 1つの吹き出しは1項目にまとめる
 - 訳は日本の漫画のセリフらしい自然な口調にする。キャラの性格や話し方、前後の流れに合わせる。人名や固有名詞はカタカナにする
 - 背景に描かれた効果音は訳さなくてよい
-- 結果は必ず report_translations ツールで返す`;
+- 結果は必ず report_translations ツールで返す（ツールが使えない場合は {"bubbles":[{"box":[左,上,右,下],"original":"…","ja":"…"}]} の形のJSONだけを返す）`;
 
   function callClaude(key, data, type) {
     const body = {
       model: MODEL,
       max_tokens: 4096,
       tools: [TOOL],
-      tool_choice: { type: 'tool', name: TOOL.name },
+      tool_choice: { type: 'auto' },
       messages: [{
         role: 'user',
         content: [
@@ -276,10 +276,17 @@
             return reject(new Error((j.error && j.error.message) || ('HTTP ' + r.status)));
           }
           const t = (j.content || []).find(c => c.type === 'tool_use');
-          if (!t) {
-            return reject(new Error('翻訳結果が返ってきませんでした' + (j.stop_reason ? '（' + j.stop_reason + '）' : '')));
+          if (t && t.input && Array.isArray(t.input.bubbles)) return resolve(t.input.bubbles);
+          // ツールを使わず文章でJSONを返してきた場合の受け取り
+          const text = (j.content || []).filter(c => c.type === 'text').map(c => c.text).join('\n');
+          const m = text.match(/\{[\s\S]*\}/);
+          if (m) {
+            try {
+              const o = JSON.parse(m[0]);
+              if (Array.isArray(o.bubbles)) return resolve(o.bubbles);
+            } catch (e) { /* 下でエラーにする */ }
           }
-          resolve(Array.isArray(t.input.bubbles) ? t.input.bubbles : []);
+          reject(new Error('翻訳結果が返ってきませんでした' + (j.stop_reason ? '（' + j.stop_reason + '）' : '')));
         },
         onerror: () => reject(new Error('APIに接続できませんでした')),
         ontimeout: () => reject(new Error('APIの応答がタイムアウトしました'))
