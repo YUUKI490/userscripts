@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         AIのべりすと キャラ画像
 // @namespace    yuuki490-ainovel
-// @version      1.6
-// @description  縦書き表示のパネルで、セリフの頭にキャラの顔画像を表示し、括弧の前の名前は画像の上に移す。洗脳中のキャラは「名前_洗脳」の画像に差し替える。画像の登録は画面の仮ボタン（顔）から。前のキャラ画像スクリプトで登録した画像と対応表をそのまま使う
+// @version      1.7
+// @description  縦書き表示のパネルで、セリフの頭にキャラの顔画像を表示し、括弧の前の名前は画像の上に移す。洗脳中のキャラは「名前_洗脳」の画像に差し替える。名前の後ろに「（ast）」のように作品コード（アルファベット3文字）を付けた画像は、設定で入れたコードと合うときだけ表示する。画像の登録は画面の仮ボタン（顔）から。前のキャラ画像スクリプトで登録した画像と対応表をそのまま使う
 // @match        https://ai-novel.com/*
 // @grant        none
 // @run-at       document-idle
@@ -19,6 +19,7 @@
   const KEY_MAP = 'ainovel_character_image_map';               // { 名前: ファイル名 }
   const KEY_DISPLAY = 'ainovel_character_image_display_settings'; // { iconSize, iconGap }
   const KEY_BRAINWASH = 'ainovel_brainwash_states';             // 名前=状態
+  const KEY_WORK = 'ainovel_character_image_work';               // 作品コード（アルファベット3文字）
 
   const BRAINWASH_SUFFIX = '_洗脳';
   const DEFAULT_SIZE = 32;
@@ -83,6 +84,17 @@
   let characterMap = {};
   let iconSize = DEFAULT_SIZE;
   let iconGap = DEFAULT_GAP;
+  let workCode = '';
+
+  function loadWork() {
+    let v = '';
+    try { v = localStorage.getItem(KEY_WORK) || ''; } catch (_) {}
+    workCode = normalizeCode(v);
+  }
+  function normalizeCode(v) {
+    const m = String(v || '').trim().match(/^[A-Za-z]{3}$/);
+    return m ? m[0].toLowerCase() : '';
+  }
 
   function loadMap() {
     const m = loadJson(KEY_MAP, {});
@@ -176,24 +188,39 @@
   }
 
   /* ===================== 名前から画像を決める ===================== */
+  // 対応表の名前を「名前」「作品コード」「洗脳用かどうか」に分ける
+  // 例：「みお（ast）」→ 名前=みお、コード=ast ／「みお（ast）_洗脳」→ 洗脳用
+  function splitKey(key) {
+    const bw = key.endsWith(BRAINWASH_SUFFIX);
+    const base = bw ? key.slice(0, -BRAINWASH_SUFFIX.length) : key;
+    const m = base.match(/^(.*?)[\s\u3000]*[（(]([A-Za-z]{3})[)）]$/);
+    return { bw, name: m ? m[1] : base, tag: m ? m[2].toLowerCase() : '' };
+  }
+
+  // 作品コードが入っているときは、コードが合う画像とコードなしの画像だけを使う
+  const visibleTag = (tag) => !workCode || !tag || tag === workCode;
+
   // 対応表から、セリフの名前に合う名前を探す（完全一致を優先、なければ一部一致で一番長いもの）
+  // 同じ名前にコード付きとコードなしの両方があるときは、コードが合うほうを優先する
   function findKey(name) {
-    if (characterMap[name] && !name.endsWith(BRAINWASH_SUFFIX)) return name;
-    const keys = Object.keys(characterMap).filter((k) => !k.endsWith(BRAINWASH_SUFFIX));
-    const exact = keys.find((k) => normalizeName(k) === normalizeName(name));
-    if (exact) return exact;
-    const hits = keys.filter((k) => sameName(k, name));
+    const entries = Object.keys(characterMap).map((k) => ({ key: k, ...splitKey(k) })).filter((e) => !e.bw && visibleTag(e.tag));
+    const prefer = (list) => list.find((e) => e.tag) || list[0];
+    const exact = entries.filter((e) => normalizeName(e.name) === normalizeName(name));
+    if (exact.length) return prefer(exact).key;
+    const hits = entries.filter((e) => sameName(e.name, name));
     if (!hits.length) return null;
-    return hits.reduce((a, b) => (normalizeName(b).length > normalizeName(a).length ? b : a));
+    const longest = hits.reduce((a, b) => (normalizeName(b.name).length > normalizeName(a.name).length ? b : a));
+    return prefer(hits.filter((e) => normalizeName(e.name) === normalizeName(longest.name))).key;
   }
 
   function resolveFilename(name) {
     const key = findKey(name);
     if (!key) return null;
+    const keyName = splitKey(key).name;
     const bw = characterMap[key + BRAINWASH_SUFFIX];
     // 洗脳状態一覧はフルネーム、セリフは下の名前（1文字のこともある）なので、フルネームの終わりが一致すれば同じ人とみなす
-    const matches = (n) => sameName(n, key) || sameName(n, name) ||
-      normalizeName(n).endsWith(normalizeName(key)) || normalizeName(n).endsWith(normalizeName(name));
+    const matches = (n) => sameName(n, keyName) || sameName(n, name) ||
+      normalizeName(n).endsWith(normalizeName(keyName)) || normalizeName(n).endsWith(normalizeName(name));
     if (bw && brainwashed.some(matches)) return bw;
     return characterMap[key];
   }
@@ -387,17 +414,22 @@
     if (document.getElementById(SETTINGS_ID)) return;
     loadMap();
     loadDisplay();
+    loadWork();
     const overlay = document.createElement('div');
     overlay.id = SETTINGS_ID;
     overlay.innerHTML = `
       <div class="cs-box">
         <div class="cs-head"><span>キャラ画像の設定</span><button type="button" class="cs-close">×</button></div>
-        <div class="cs-label">画像を登録（まとめて選べるよ。選んだら画像ごとにキャラの名前を入れてね。洗脳中の画像は「名前_洗脳」）</div>
+        <div class="cs-row">
+          <span class="cs-label">作品コード（アルファベット3文字）</span><input type="text" class="cs-work" maxlength="3" placeholder="ast" style="width:4em;font-size:15px;padding:4px;">
+          <span class="cs-label">名前に「（ast）」のように付けた画像は、このコードと合うときだけ出すよ。空なら全部出す</span>
+        </div>
+        <div class="cs-label">画像を登録（まとめて選べるよ。選んだら画像ごとにキャラの名前を入れてね。洗脳中の画像は「名前_洗脳」、作品ごとに分けるなら「みお（ast）」）</div>
         <div class="cs-row"><label class="cs-btn cs-pick">🖼 画像を選ぶ<input type="file" multiple class="cs-file"></label></div>
         <div class="cs-pending"></div>
         <div class="cs-row cs-regrow" style="display:none"><button type="button" class="cs-btn cs-reg">この名前で登録</button></div>
-        <div class="cs-label">対応表（1行に「名前=画像ファイル名」。洗脳中の画像は「名前_洗脳=ファイル名」）</div>
-        <textarea class="cs-map" placeholder="焔=homura.png&#10;焔_洗脳=homura_bw.png"></textarea>
+        <div class="cs-label">対応表（1行に「名前=画像ファイル名」。洗脳中の画像は「名前_洗脳=ファイル名」、作品ごとなら「みお（ast）=みお（ast）.png」）</div>
+        <textarea class="cs-map" placeholder="焔=homura.png&#10;焔_洗脳=homura_bw.png&#10;みお（ast）=みお（ast）.png&#10;みお（ast）_洗脳=みお（ast）_洗脳.png"></textarea>
         <div class="cs-row">
           <span class="cs-label">顔の大きさ</span><input type="number" class="cs-size" min="20" max="120"><span class="cs-label">px</span>
           <span class="cs-label">すき間</span><input type="number" class="cs-gap" min="0" max="40"><span class="cs-label">px</span>
@@ -413,10 +445,12 @@
     const mapField = box.querySelector('.cs-map');
     const sizeField = box.querySelector('.cs-size');
     const gapField = box.querySelector('.cs-gap');
+    const workField = box.querySelector('.cs-work');
     const result = box.querySelector('.cs-result');
     mapField.value = mappingText();
     sizeField.value = iconSize;
     gapField.value = iconGap;
+    workField.value = workCode;
 
     // 選んだ画像を一覧に出して、画像ごとにキャラの名前を入れてもらう
     // （スマホだとファイル名が数字になるので、入れた名前で保存して対応表にも足す）
@@ -447,7 +481,7 @@
         const preview = URL.createObjectURL(f);
         const row = document.createElement('div');
         row.className = 'cs-prow';
-        row.innerHTML = '<img alt=""><input type="text" placeholder="キャラの名前（例：焔、焔_洗脳）">';
+        row.innerHTML = '<img alt=""><input type="text" placeholder="キャラの名前（例：焔、焔_洗脳、みお（ast））">';
         row.querySelector('img').src = preview;
         row.querySelector('input').value = guess;
         pendingBox.appendChild(row);
@@ -499,8 +533,17 @@
       iconSize = Number.isFinite(s) ? Math.max(20, Math.min(120, s)) : DEFAULT_SIZE;
       iconGap = Number.isFinite(g) ? Math.max(0, Math.min(40, g)) : DEFAULT_GAP;
       saveJson(KEY_DISPLAY, { iconSize, iconGap });
+      const codeRaw = workField.value.trim();
+      if (codeRaw && !normalizeCode(codeRaw)) {
+        result.className = 'cs-msg cs-result';
+        result.textContent = '作品コードはアルファベット3文字で入れてね（空でもOK）';
+        return;
+      }
+      workCode = normalizeCode(codeRaw);
+      try { localStorage.setItem(KEY_WORK, workCode); } catch (_) {}
+      workField.value = workCode;
       result.className = 'cs-msg cs-result cs-ok';
-      result.textContent = '保存したよ（対応表 ' + Object.keys(map).length + '件）';
+      result.textContent = '保存したよ（対応表 ' + Object.keys(map).length + '件' + (workCode ? '、作品コード ' + workCode : '') + '）';
       renderList(box);
       refreshAll();
     });
@@ -523,6 +566,7 @@
   /* ===================== 開始 ===================== */
   loadMap();
   loadDisplay();
+  loadWork();
   refreshStates();
   openDb().catch((e) => console.warn('[キャラ画像]', e)).then(() => applyFaces());
 
