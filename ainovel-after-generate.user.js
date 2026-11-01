@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         AIのべりすと 生成後の自動処理
 // @namespace    yuuki490-ainovel
-// @version      1.6
-// @description  生成完了時、途中で切れていれば「続ける」を押す（最初の生成も含めて設定した回数まで。それでも切れていれば最後の行を消す）。画面の仮ボタン（連）でON/OFFと回数を変えられる（保存される）。脚注まとめ係の実行は「脚注まとめ」（ainovel-footnote.user.js）のボタンに分離した
+// @version      1.7
+// @description  生成完了時、途中で切れていれば「続ける」を押す（最初の生成も含めて設定した回数まで。それでも切れていれば最後の行を消す）。画面の仮ボタン（連）でON/OFFと回数を変えられる（保存される）。最後のAIブロックに（第〇章完）があれば章の終わりとみなし、途中切れの判定をせずに止める。脚注まとめ係の実行は「脚注まとめ」（ainovel-footnote.user.js）のボタンに分離した
 // @match        https://ai-novel.com/*
 // @grant        none
 // @run-at       document-idle
@@ -97,6 +97,9 @@
     };
   }
 
+  // （第27章完）（第２７章 完）（第二十七章完）などの章の終わりの目印
+  const CHAPTER_END_RE = /[（(]第[0-9０-９〇零一二三四五六七八九十百.．・]+章[\s　]*完[）)]/;
+
   // 「」『』（）が閉じていなければ、セリフの途中で切れているとみなす
   const BRACKETS = [['「', '」'], ['『', '』'], ['（', '）'], ['(', ')']];
   function hasOpenBracket(text) {
@@ -139,6 +142,12 @@
     if (!info) { autoCount = 0; return; }
 
     const c = lastChar(info.text);
+    // 章の終わりの目印があれば、途中切れの判定をせずに止める
+    if (CHAPTER_END_RE.test(info.text)) {
+      console.log('[生成後の自動処理] 章の終わりの目印があるので止めるよ');
+      autoCount = 0;
+      return;
+    }
     const complete = END_CHARS.includes(c) && !hasOpenBracket(info.text);
     const field = document.getElementById('chat_field');
     const fieldHasText = field && field.value.trim() !== '';
