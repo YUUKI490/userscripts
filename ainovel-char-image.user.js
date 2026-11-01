@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         AIのべりすと キャラ画像
 // @namespace    yuuki490-ainovel
-// @version      1.9
+// @version      2.0
 // @description  縦書き表示のパネルで、セリフの頭にキャラの顔画像を表示し、括弧の前の名前は画像の上に移す。洗脳中のキャラは「名前_洗脳」の画像に差し替える。名前の後ろに「（ast）」のように作品コード（アルファベット3文字）を付けた画像は、設定で入れたコードと合うときだけ表示する。画像の登録は画面の仮ボタン（顔）から。前のキャラ画像スクリプトで登録した画像と対応表をそのまま使う
 // @match        https://ai-novel.com/*
 // @grant        none
@@ -43,7 +43,7 @@
     /* --tg-hang は縦書き表示が鈎括弧で始まる行に付けるぶら下げ幅（折り返した列を1文字下げる分）。顔の下にその分の余白も足す */
     #${SCROLLER_ID}.${ON_CLASS} .tg-line { position:relative !important; padding-top:calc(var(--cimg-name, 14px) + var(--cimg-size, 32px) + var(--cimg-gap, 6px) + var(--tg-hang, 0px)) !important; }
     #${SCROLLER_ID} .${FACE_CLASS} { position:absolute !important; top:var(--cimg-name, 14px) !important; left:0 !important; right:auto !important; transform:none !important; width:var(--cimg-size, 32px) !important; height:var(--cimg-size, 32px) !important; object-fit:cover !important; margin:0 !important; padding:0 !important; border:none !important; border-radius:4px; }
-    #${SCROLLER_ID} .${NAME_CLASS} { position:absolute !important; top:0 !important; left:0 !important; right:auto !important; width:max-content !important; max-width:none !important; transform:none !important; height:var(--cimg-name, 14px) !important; line-height:var(--cimg-name, 14px) !important; writing-mode:horizontal-tb !important; white-space:nowrap !important; text-align:center !important; font-family:sans-serif !important; font-weight:700 !important; color:#555 !important; margin:0 !important; padding:0 !important; }
+    #${SCROLLER_ID} .${NAME_CLASS} { position:absolute !important; top:0 !important; left:0 !important; right:auto !important; width:max-content !important; max-width:none !important; transform:none !important; height:var(--cimg-name, 14px) !important; line-height:var(--cimg-name, 14px) !important; writing-mode:horizontal-tb !important; white-space:nowrap !important; text-align:center !important; text-indent:0 !important; letter-spacing:0 !important; font-family:sans-serif !important; font-weight:700 !important; color:#555 !important; margin:0 !important; padding:0 !important; }
 
     #${SETTINGS_ID} { position:fixed; inset:0; z-index:99992; background:rgba(0,0,0,.55); display:flex; align-items:center; justify-content:center; padding:10px; box-sizing:border-box; font-family:sans-serif; }
     #${SETTINGS_ID} .cs-box { width:min(560px,100%); max-height:92vh; overflow-y:auto; background:#fff; color:#222; border-radius:12px; padding:12px; box-sizing:border-box; display:flex; flex-direction:column; gap:10px; }
