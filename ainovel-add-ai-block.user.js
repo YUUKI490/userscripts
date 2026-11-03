@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         AIのべりすと AIブロック追加
 // @namespace    yuuki490-ainovel
-// @version      3.0
-// @description  画面の仮ボタン（➕）で入力パネルを開き、ユーザーブロック＋AIブロック（書き出し入り）を作って「続ける」を押す。ユーザー欄・AI欄それぞれにテンプレ3つ。テンプレの {章} を章番号に置き換える（次の章／現在の章の続き／断章）。「書く場面」欄の中身を {場面}（または【書く場面】の下）に差し込む。場面欄の「書く」で清書補助パネルを開き、視点（プルダウン）・主に喋る（タップで選ぶ）・冒頭・終わり・配分（プルダウン）・テンポ（プルダウン）・配分メモ・やらないこと・起きることを埋めて「清書」を押すと、プチボット「指示清書」に通した結果を場面欄に入れる。「冒頭はここから」「最後はこの状態」の欄をタップすると専用画面が開き、QuickPasteの人物／用語を本文の最後に足したり履歴（10件）から呼び出したりして、「転送」で欄に入れる
+// @version      3.1
+// @description  画面の仮ボタン（➕）で入力パネルを開き、ユーザーブロック＋AIブロック（書き出し入り）を作って「続ける」を押す。ユーザー欄・AI欄それぞれにテンプレ3つ。テンプレの {章} を章番号に置き換える（次の章／現在の章の続き／断章）。「書く場面」欄の中身を {場面}（または【書く場面】の下）に差し込む。場面欄の「書く」で清書補助パネルを開き、視点（プルダウン）・主に喋る（タップで選ぶ）・冒頭・終わり・配分（プルダウン）・テンポ（プルダウン）・配分メモ・やらないこと・起きることを埋めて「清書」を押すと、プチボット「指示清書」に通した結果を場面欄に入れる。「冒頭はここから」「最後はこの状態」の欄をタップすると専用画面が開き、QuickPasteの人物／用語を本文の最後に足したり履歴（10件）から呼び出したりして、「転送」で欄に入れる。「場面欄へ」はプチボットを通さず箇条書きのまま場面欄に入れる（「清書」はプチボットに通す）
 // @match        https://ai-novel.com/*
 // @grant        GM_getValue
 // @grant        GM_setValue
@@ -85,7 +85,8 @@
     #aib_h_speakers .aib_h_none { color:#888; font-size:.8rem; padding:3px 4px; }
     #aib_h_events_area { flex:1; display:flex; flex-direction:column; min-height:0; }
     #aib_h_events_area textarea { flex:1; width:100%; box-sizing:border-box; resize:none; border:1px solid #999; border-radius:10px; padding:8px; font-size:16px; line-height:1.6; color:#222; background:#fffbe6; }
-    #aib_h_polish { flex:1; background:rgb(205,43,90); border-color:#000; color:#fff; }
+    #aib_h_direct { flex:1; background:rgb(205,43,90); border-color:#000; color:#fff; }
+    #aib_h_polish { flex:1; background:#fff3c4; border-color:#c9a400; color:#222; }
     #aib_h_polish:disabled { opacity:.5; }
     #aib_h_status { font-size:.8rem; color:#444; min-height:1.2em; }
     #aib_helper input.aib_h_tap { cursor:pointer; caret-color:transparent; }
@@ -384,7 +385,8 @@
           <div id="aib_h_status"></div>
           <div class="aib_row">
             <button type="button" class="aib_btn" id="aib_h_qp">QP辞書</button>
-            <button type="button" class="aib_btn" id="aib_h_polish">清書 → 場面欄へ</button>
+            <button type="button" class="aib_btn" id="aib_h_direct">場面欄へ</button>
+            <button type="button" class="aib_btn" id="aib_h_polish">清書</button>
           </div>
         </div>
         <div id="aib_settings">
@@ -479,6 +481,7 @@
     });
     ['pov', 'start', 'end', 'ratio', 'tempo', 'memo', 'avoid', 'events'].forEach((k) => helperFields[k].addEventListener('change', saveHelper));
     helperFields.polish.addEventListener('click', polishToScene);
+    overlay.querySelector('#aib_h_direct').addEventListener('click', directToScene);
     // 冒頭／最後の欄をタップすると専用画面を開く
     helperFields.start.addEventListener('click', () => openEditor('start', '冒頭はここから'));
     helperFields.end.addEventListener('click', () => openEditor('end', '最後はこの状態'));
@@ -819,6 +822,22 @@
     if (lines.length && lines[0].trim().replace(/[\s　:：]+$/, '') === SCENE_HEAD) lines.shift();
     while (lines.length && !lines[0].trim()) lines.shift();
     return lines.join('\n').trim();
+  }
+
+  // プチボットを通さず、箇条書きのまま場面欄に入れる
+  function directToScene() {
+    if (polishing) return;
+    const bullets = buildBulletText();
+    if (!bullets) { setStatus('どれか1つは埋めてね', '#cc0000'); return; }
+    sceneField.value = bullets;
+    fireInput(sceneField);
+    // 冒頭・終わり・起きることは毎回空にして、視点などは次回のために残す
+    helperFields.start.value = '';
+    helperFields.end.value = '';
+    helperFields.events.value = '';
+    saveHelper();
+    setStatus('場面欄に入れたよ', '#2d8a34');
+    helper.classList.remove('aib-open');
   }
 
   async function polishToScene() {
