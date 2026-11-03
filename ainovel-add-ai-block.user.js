@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         AIのべりすと AIブロック追加
 // @namespace    yuuki490-ainovel
-// @version      2.8
+// @version      2.9
 // @description  画面の仮ボタン（➕）で入力パネルを開き、ユーザーブロック＋AIブロック（書き出し入り）を作って「続ける」を押す。ユーザー欄・AI欄それぞれにテンプレ3つ。テンプレの {章} を章番号に置き換える（次の章／現在の章の続き／断章）。「書く場面」欄の中身を {場面}（または【書く場面】の下）に差し込む。場面欄の「書く」で清書補助パネルを開き、視点（プルダウン）・主に喋る（タップで選ぶ）・冒頭・終わり・配分（プルダウン）・テンポ（プルダウン）・配分メモ・やらないこと・起きることを埋めて「清書」を押すと、プチボット「指示清書」に通した結果を場面欄に入れる
 // @match        https://ai-novel.com/*
 // @grant        GM_getValue
@@ -481,18 +481,26 @@
   }
 
   // QuickPasteの辞書（名前(説明) の1行1項目）から名前を読む。人物らしいものを先に並べる
+  // 【キャラ】【用語】の見出しがあれば【キャラ】の項目を先に並べ、「春日野奏汰〈奏汰〉」は〈 〉の中（下の名前）を使う
   function loadCharacters() {
     let text = '';
     try { text = localStorage.getItem(KEY_CHARLIST) || ''; } catch (_) {}
     const persons = [];
     const others = [];
+    let kind = '';
     text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean).forEach((line) => {
+      const head = line.match(/^【([^】]*)】$/);
+      if (head) { kind = /キャラ|人物/.test(head[1]) ? 'char' : 'term'; return; }
       const open = line.indexOf('(');
       const close = line.lastIndexOf(')');
-      const name = open > 0 && close > open ? line.slice(0, open).trim() : line;
+      let name = open > 0 && close > open ? line.slice(0, open).trim() : line;
       const desc = open > 0 && close > open ? line.slice(open + 1, close) : '';
+      const short = name.match(/^(.*?)〈([^〉]*)〉\s*$/);
+      if (short) name = (short[2].trim() || short[1].trim());
+      else if (kind === 'char') { const cut = name.split(/[・\s\u3000]/)[0]; if (cut) name = cut; }
       if (!name) return;
-      (PERSON_RE.test(desc) ? persons : others).push(name);
+      const isPerson = kind ? kind === 'char' : PERSON_RE.test(desc);
+      (isPerson ? persons : others).push(name);
     });
     return persons.concat(others);
   }

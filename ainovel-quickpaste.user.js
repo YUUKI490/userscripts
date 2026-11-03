@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         AIのべりすと QuickPaste
 // @namespace    ainovelist-quickpaste
-// @version      2.6
-// @description  TXTのキャラ・用語一覧から、単体または複数の名前を入力欄へ挿入します。洗脳状態のキャラは色分け表示します。一覧の「本文から追加」でプチボット「新キャラ抽出」に本文を読ませ、辞書にない人物・用語を確認してから追加できます（TXT保存も可）
+// @version      2.7
+// @description  TXTのキャラ・用語一覧から、単体または複数の名前を入力欄へ挿入します。TXTに【キャラ】【用語】の見出し行があればタブで分けて表示し、「春日野奏汰〈奏汰〉(説明)」のように〈 〉を書いたキャラは下の名前で貼り付けます（下の名前／フルネームは切り替え可）。洗脳状態のキャラは色分け表示します。一覧の「本文から追加」でプチボット「新キャラ抽出」に本文を読ませ、辞書にない人物・用語を確認してから追加できます（TXT保存も可）
 // @match        https://ai-novel.com/*
 // @grant        none
 // @run-at       document-idle
@@ -16,6 +16,10 @@
     const KEY_HIGHLIGHTS = 'ainovelist_quickpaste_highlights';
     /* Grok文章コピー側が localStorage に書き出す洗脳状態一覧（雷花=洗脳状態 形式） */
     const KEY_BRAINWASH = 'ainovel_brainwash_states';
+    /* 貼り付けを下の名前にするか（'short'）フルネームにするか（'full'） */
+    const KEY_PASTE_MODE = 'ainovelist_quickpaste_paste_mode';
+    /* 見出しのない抽出結果をキャラか用語か振り分ける目安（説明にこの言葉があればキャラ） */
+    const PERSON_RE = /主人公|ヒロイン|女性|男性|女の子|男の子|少女|少年|歳|才|年生|姉|妹|兄|弟|母|父|娘|息子|先生|教師|生徒|部長|会長|メイド|騎士|聖女|勇者|魔王|王女|王子|女王|国王|巫女|隊員|隊長|幹部|社長|店長|友人|親友|幼馴染|クラスメイト|同級生|先輩|後輩|彼女|彼氏|妻|夫|人間|女|男/;
     /* 本文から追加：プチボットの名前に含まれる文字と、プロンプトの目印 */
     const EXTRACT_BOT_NAME = '新キャラ抽出';
     const EXTRACT_PLACEHOLDER = '（ここに登録済み一覧を貼り付ける）';
@@ -31,6 +35,7 @@
     let lastSelectionEnd = null;
     let currentCharacters = [];
     let currentBox = null;
+    let currentTab = 'char';
     const checkNodes = new Map();
 
     const style = document.createElement('style');
@@ -41,6 +46,11 @@
         #qp_filename { margin-left:8px; color:#777; font-size:.72rem; font-weight:400; }
         #qp_close { border:0; background:transparent; color:#555; font-size:1.5rem; cursor:pointer; padding:2px 8px; }
         #qp_list { flex:1; overflow-y:auto; padding:12px; }
+        #qp_tabbar { flex:none; display:flex; align-items:center; gap:6px; padding:8px 12px; border-bottom:1px solid #ddd; background:#fafafa; }
+        .qp_tab { border:1px solid #999; border-radius:8px; background:#fff; color:#333; padding:6px 14px; font-weight:700; cursor:pointer; }
+        .qp_tab.qp_active { background:#2d509e; border-color:#2d509e; color:#fff; }
+        #qp_mode { margin-left:auto; border:1px solid #888; border-radius:8px; background:#fff; color:#222; padding:6px 10px; font-size:.8rem; font-weight:700; cursor:pointer; }
+        .qp_short { display:inline-block; margin-left:6px; padding:1px 7px; font-size:.72rem; font-weight:700; color:#2d509e; background:#e3ebfa; border-radius:10px; vertical-align:middle; }
         .qp_row { display:flex; align-items:stretch; gap:6px; margin-bottom:9px; }
         .qp_check { width:24px; margin:0; flex:none; }
         .qp_order { flex:none; width:20px; display:flex; align-items:center; justify-content:center; font-size:12px; font-weight:700; color:#fff; background:#2d509e; border-radius:50%; height:20px; align-self:center; visibility:hidden; }
@@ -86,6 +96,8 @@
         localStorage.setItem(KEY_TEXT, text);
         localStorage.setItem(KEY_FILE, filename || '');
     }
+    function loadPasteMode() { return localStorage.getItem(KEY_PASTE_MODE) === 'full' ? 'full' : 'short'; }
+    function savePasteMode(mode) { localStorage.setItem(KEY_PASTE_MODE, mode); }
     function loadHighlights() {
         try { return new Set(JSON.parse(localStorage.getItem(KEY_HIGHLIGHTS) || '[]')); }
         catch (_) { return new Set(); }
@@ -128,16 +140,50 @@
         return false;
     }
 
+    /* 【キャラ】【人物】→キャラ、それ以外の【〜】→用語。見出しでない行は null */
+    function headingKind(line) {
+        const m = line.match(/^【([^】]*)】$/);
+        if (!m) return null;
+        return /キャラ|人物/.test(m[1]) ? 'char' : 'term';
+    }
+
+    /* 「春日野奏汰〈奏汰〉」→ フルネームと貼り付け用の名前に分けます */
+    function splitShort(raw) {
+        const m = raw.match(/^(.*?)〈([^〉]*)〉\s*$/);
+        if (m && m[1].trim()) return { full: m[1].trim(), short: m[2].trim() || m[1].trim(), marked: !!m[2].trim() };
+        return { full: raw.trim(), short: raw.trim(), marked: false };
+    }
+
+    /*
+     * 1行1項目「名前(説明)」を読みます。
+     * 【キャラ】【用語】の見出し行があれば kind を付けます（見出しのないTXTは kind:'' で今まで通り）。
+     * 〈 〉がないキャラは「・」かスペースの前を下の名前として使います（ルカ・ヴェンツ → ルカ）。
+     */
     function parseCharacters(text) {
-        return text.split(/\r?\n/).map(line => line.trim()).filter(Boolean).map(line => {
+        let kind = '';
+        const items = [];
+        text.split(/\r?\n/).map(line => line.trim()).filter(Boolean).forEach(line => {
+            const head = headingKind(line);
+            if (head) { kind = head; return; }
             const open = line.indexOf('(');
             const close = line.lastIndexOf(')');
-            if (open > 0 && close > open) {
-                return { name: line.slice(0, open).trim(), description: line.slice(open + 1, close).trim() };
+            const hasDesc = open > 0 && close > open;
+            const rawName = hasDesc ? line.slice(0, open) : line;
+            const description = hasDesc ? line.slice(open + 1, close).trim() : '';
+            const { full, short, marked } = splitShort(rawName);
+            if (!full) return;
+            let paste = short;
+            if (!marked && kind === 'char') {
+                const cut = full.split(/[・\s\u3000]/)[0];
+                if (cut && cut !== full) paste = cut;
             }
-            return { name: line, description: '' };
-        }).filter(item => item.name);
+            items.push({ name: full, paste, description, kind });
+        });
+        return items;
     }
+
+    function hasSections(characters) { return characters.some(item => item.kind); }
+    function pasteName(item) { return loadPasteMode() === 'full' ? item.name : (item.paste || item.name); }
 
     function characterKey(item) { return `${item.name}\u001f${item.description}`; }
 
@@ -174,7 +220,7 @@
     }
 
     function combinedText(characters) {
-        const byKey = new Map(characters.map(item => [characterKey(item), item.name]));
+        const byKey = new Map(characters.map(item => [characterKey(item), pasteName(item)]));
         const names = [...selected].map(key => byKey.get(key)).filter(Boolean);
         return names.length ? names.join(separator) + ending : '';
     }
@@ -224,7 +270,7 @@
         const header = document.createElement('div');
         header.id = 'qp_header';
         const title = document.createElement('div');
-        title.textContent = 'キャラ一覧';
+        title.textContent = hasSections(characters) ? 'キャラ・用語一覧' : 'キャラ一覧';
         const filename = loadFileName();
         if (filename) {
             const name = document.createElement('span');
@@ -245,6 +291,39 @@
         extract.addEventListener('click', () => extractFromStory(extract));
         header.append(title, extract, close);
 
+        const sectioned = hasSections(characters);
+        const anyShort = characters.some(item => item.paste && item.paste !== item.name);
+        let tabbar = null;
+        if (sectioned || anyShort) {
+            tabbar = document.createElement('div');
+            tabbar.id = 'qp_tabbar';
+            if (sectioned) {
+                [['char', 'キャラ'], ['term', '用語']].forEach(([value, label]) => {
+                    const count = characters.filter(item => item.kind === value).length;
+                    const tab = document.createElement('button');
+                    tab.type = 'button';
+                    tab.className = `qp_tab${currentTab === value ? ' qp_active' : ''}`;
+                    tab.textContent = `${label}（${count}）`;
+                    tab.addEventListener('click', () => { currentTab = value; showMenu(); });
+                    tabbar.appendChild(tab);
+                });
+            }
+            if (anyShort) {
+                const mode = document.createElement('button');
+                mode.type = 'button';
+                mode.id = 'qp_mode';
+                mode.textContent = loadPasteMode() === 'full' ? '貼り付け：フルネーム' : '貼り付け：下の名前';
+                mode.title = 'キャラを貼り付けるときの名前を切り替え';
+                mode.addEventListener('click', () => {
+                    savePasteMode(loadPasteMode() === 'full' ? 'short' : 'full');
+                    showMenu();
+                });
+                tabbar.appendChild(mode);
+            }
+        }
+        /* 見出しがあるTXTは今のタブの項目だけ並べます（見出しより上の行はキャラ側に出します） */
+        const shown = sectioned ? characters.filter(item => (item.kind || 'char') === currentTab) : characters;
+
         const list = document.createElement('div');
         list.id = 'qp_list';
         if (!characters.length) {
@@ -253,7 +332,13 @@
             empty.textContent = 'まだ一覧がありません。「読込」からTXTファイルを選択してください。';
             list.appendChild(empty);
         }
-        characters.forEach(item => {
+        if (characters.length && !shown.length) {
+            const empty = document.createElement('div');
+            empty.id = 'qp_empty';
+            empty.textContent = currentTab === 'term' ? '用語はまだありません。' : 'キャラはまだありません。';
+            list.appendChild(empty);
+        }
+        shown.forEach(item => {
             const key = characterKey(item);
             const row = document.createElement('div');
             row.className = 'qp_row';
@@ -274,6 +359,12 @@
             const name = document.createElement('span');
             name.className = 'qp_name';
             name.textContent = item.name;
+            if (item.paste && item.paste !== item.name) {
+                const short = document.createElement('span');
+                short.className = 'qp_short';
+                short.textContent = item.paste;
+                name.appendChild(short);
+            }
             if (isBrainwashed) {
                 const state = document.createElement('span');
                 state.className = 'qp_state';
@@ -295,7 +386,7 @@
                     held = false;
                     return;
                 }
-                if (insertIntoChat(item.name)) {
+                if (insertIntoChat(pasteName(item))) {
                     selected.clear(); separator = DEFAULT_SEPARATOR; ending = ''; overlay.remove();
                 }
             });
@@ -323,7 +414,9 @@
             list.appendChild(row);
         });
 
-        box.append(header, list);
+        box.append(header);
+        if (tabbar) box.appendChild(tabbar);
+        box.appendChild(list);
         if (selected.size) box.appendChild(makeTools(characters));
         overlay.appendChild(box);
         overlay.addEventListener('click', event => { if (event.target === overlay) overlay.remove(); });
@@ -478,25 +571,47 @@
         return out.value.trim();
     }
 
-    /* プチボットの出力から「名前(説明)」の行だけ拾い、辞書にある名前は除きます */
+    /*
+     * プチボットの出力から「名前(説明)」の行だけ拾い、辞書にある名前は除きます。
+     * 出力に【キャラ】【用語】の見出しがあればそれで分け、なければ説明の言葉でキャラか用語か推測します。
+     * 戻り値は { char:[行…], term:[行…] }
+     */
     function pickNewEntries(output, existing) {
         const have = new Set(existing.map(item => normalizeName(item.name)));
         const seen = new Set();
-        const lines = [];
+        const result = { char: [], term: [] };
+        let kind = '';
         output.split(/\r?\n/).forEach(raw => {
-            let line = raw.trim().replace(/^[・\-－−•*\d.、\s]+/, '').replace(/（/g, '(').replace(/）/g, ')');
+            const trimmed = raw.trim();
+            const head = headingKind(trimmed);
+            if (head) { kind = head; return; }
+            let line = trimmed.replace(/^[・\-－−•*\d.、\s]+/, '').replace(/（/g, '(').replace(/）/g, ')');
             if (!line || /^なし$/.test(line) || /^[【\[]/.test(line)) return;
             const open = line.indexOf('(');
             const close = line.lastIndexOf(')');
-            const name = (open > 0 && close > open ? line.slice(0, open) : line).trim();
+            const rawName = (open > 0 && close > open ? line.slice(0, open) : line).trim();
             const desc = open > 0 && close > open ? line.slice(open + 1, close).trim() : '';
-            if (!name || name.length > 30) return;
-            const key = normalizeName(name);
+            const { full } = splitShort(rawName);
+            if (!full || full.length > 30) return;
+            const key = normalizeName(full);
             if (have.has(key) || seen.has(key)) return;
             seen.add(key);
-            lines.push(desc ? `${name}(${desc})` : name);
+            const k = kind || (PERSON_RE.test(desc) ? 'char' : 'term');
+            result[k].push(desc ? `${rawName}(${desc})` : rawName);
         });
-        return lines;
+        return result;
+    }
+
+    /* 確認画面の文章（【キャラ】【用語】見出しつき）を { char:[], term:[] } に戻します */
+    function splitConfirmText(text) {
+        const result = { char: [], term: [] };
+        let kind = 'char';
+        text.split(/\r?\n/).map(l => l.trim()).filter(Boolean).forEach(line => {
+            const head = headingKind(line);
+            if (head) { kind = head; return; }
+            result[kind].push(line);
+        });
+        return result;
     }
 
     function downloadText(text, filename) {
@@ -508,12 +623,38 @@
         setTimeout(() => URL.revokeObjectURL(url), 1000);
     }
 
-    function mergedText(addLines) {
+    /*
+     * 辞書に見出しがあれば、キャラは【キャラ】の最後、用語は【用語】の最後に入れます（見出しがなければ作ります）。
+     * 見出しのない古い辞書には今まで通り末尾にまとめて足します。
+     */
+    function mergedText(add) {
         const base = loadText().replace(/\s+$/, '');
-        return (base ? base + '\n' : '') + addLines.join('\n') + '\n';
+        if (!hasSections(parseCharacters(base))) {
+            const all = add.char.concat(add.term);
+            return (base ? base + '\n' : '') + all.join('\n') + '\n';
+        }
+        const lines = base.split(/\r?\n/);
+        const insertSection = (kind, label, addLines) => {
+            if (!addLines.length) return;
+            let start = -1;
+            for (let i = 0; i < lines.length; i++) if (headingKind(lines[i].trim()) === kind) { start = i; break; }
+            if (start < 0) {
+                while (lines.length && !lines[lines.length - 1].trim()) lines.pop();
+                lines.push('', label, ...addLines);
+                return;
+            }
+            let end = lines.length;
+            for (let i = start + 1; i < lines.length; i++) if (headingKind(lines[i].trim())) { end = i; break; }
+            let at = end;
+            while (at > start + 1 && !lines[at - 1].trim()) at--;
+            lines.splice(at, 0, ...addLines);
+        };
+        insertSection('char', '【キャラ】', add.char);
+        insertSection('term', '【用語】', add.term);
+        return lines.join('\n') + '\n';
     }
 
-    function showExtractConfirm(lines) {
+    function showExtractConfirm(found) {
         document.querySelector('#qp_ex_overlay')?.remove();
         const overlay = document.createElement('div');
         overlay.id = 'qp_ex_overlay';
@@ -521,23 +662,24 @@
         box.id = 'qp_ex_box';
         const title = document.createElement('div');
         title.className = 'qp_ex_title';
-        title.textContent = `本文から見つかった新しい名前（${lines.length}件）`;
+        title.textContent = `本文から見つかった新しい名前（${found.char.length + found.term.length}件）`;
         const small = document.createElement('div');
         small.className = 'qp_ex_small';
-        small.textContent = '1行1つ「名前(簡易説明)」。要らない行は消して、説明は直してOK。「追加」で辞書の末尾に入ります。「TXTで保存」は追加後の辞書をファイルにします（元のTXTは変わらないので、読み直すと追加分が消えます）';
+        small.textContent = '1行1つ「名前〈下の名前〉(簡易説明)」。要らない行は消して、説明や〈 〉は直してOK。キャラと用語が違っていたら行を見出しの下へ移してね。「追加」で辞書の【キャラ】【用語】の最後に入ります（見出しのない辞書は末尾）。「TXTで保存」は追加後の辞書をファイルにします（元のTXTは変わらないので、読み直すと追加分が消えます）';
         const ta = document.createElement('textarea');
-        ta.value = lines.join('\n');
+        ta.value = ['【キャラ】', ...found.char, '', '【用語】', ...found.term].join('\n');
         const row = document.createElement('div');
         row.className = 'qp_ex_row';
-        const getLines = () => ta.value.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+        const getLines = () => splitConfirmText(ta.value);
         const add = document.createElement('button');
         add.type = 'button'; add.className = 'qp_ex_add'; add.textContent = '辞書に追加';
         add.addEventListener('click', () => {
             const ls = getLines();
-            if (!ls.length) { toast('追加する行がないよ'); return; }
+            const count = ls.char.length + ls.term.length;
+            if (!count) { toast('追加する行がないよ'); return; }
             saveText(mergedText(ls), loadFileName());
             overlay.remove();
-            toast(`${ls.length}件を辞書に追加したよ`, 'rgba(45,138,52,.95)');
+            toast(`${count}件を辞書に追加したよ`, 'rgba(45,138,52,.95)');
             showMenu();
         });
         const save = document.createElement('button');
@@ -578,9 +720,9 @@
             const filled = originalPrompt.replace(EXTRACT_PLACEHOLDER, listText);
             let result;
             try { result = await runBot(idx, promptEl, filled); } finally { promptEl.value = originalPrompt; originalPrompt = null; }
-            const lines = pickNewEntries(result || '', existing);
-            if (!lines.length) { toast('新しい名前は見つからなかったよ'); return; }
-            showExtractConfirm(lines);
+            const found = pickNewEntries(result || '', existing);
+            if (!found.char.length && !found.term.length) { toast('新しい名前は見つからなかったよ'); return; }
+            showExtractConfirm(found);
         } catch (e) {
             toast(e.message || String(e), 'rgba(204,0,0,.95)');
         } finally {
