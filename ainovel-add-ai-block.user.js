@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         AIのべりすと AIブロック追加
 // @namespace    yuuki490-ainovel
-// @version      2.9
-// @description  画面の仮ボタン（➕）で入力パネルを開き、ユーザーブロック＋AIブロック（書き出し入り）を作って「続ける」を押す。ユーザー欄・AI欄それぞれにテンプレ3つ。テンプレの {章} を章番号に置き換える（次の章／現在の章の続き／断章）。「書く場面」欄の中身を {場面}（または【書く場面】の下）に差し込む。場面欄の「書く」で清書補助パネルを開き、視点（プルダウン）・主に喋る（タップで選ぶ）・冒頭・終わり・配分（プルダウン）・テンポ（プルダウン）・配分メモ・やらないこと・起きることを埋めて「清書」を押すと、プチボット「指示清書」に通した結果を場面欄に入れる
+// @version      3.0
+// @description  画面の仮ボタン（➕）で入力パネルを開き、ユーザーブロック＋AIブロック（書き出し入り）を作って「続ける」を押す。ユーザー欄・AI欄それぞれにテンプレ3つ。テンプレの {章} を章番号に置き換える（次の章／現在の章の続き／断章）。「書く場面」欄の中身を {場面}（または【書く場面】の下）に差し込む。場面欄の「書く」で清書補助パネルを開き、視点（プルダウン）・主に喋る（タップで選ぶ）・冒頭・終わり・配分（プルダウン）・テンポ（プルダウン）・配分メモ・やらないこと・起きることを埋めて「清書」を押すと、プチボット「指示清書」に通した結果を場面欄に入れる。「冒頭はここから」「最後はこの状態」の欄をタップすると専用画面が開き、QuickPasteの人物／用語を本文の最後に足したり履歴（10件）から呼び出したりして、「転送」で欄に入れる
 // @match        https://ai-novel.com/*
 // @grant        GM_getValue
 // @grant        GM_setValue
@@ -28,6 +28,8 @@
   const SCENE_HEAD = '【書く場面】';
   // 清書補助
   const KEY_HELPER = 'ainovel_aiblock_helper';          // 補助パネルの欄の中身（GM_setValue）
+  const KEY_EDIT_HISTORY = 'ainovel_aiblock_edit_history'; // 冒頭／最後の専用画面の履歴（GM_setValue）
+  const EDIT_HISTORY_MAX = 10;
   const KEY_CHARLIST = 'ainovelist_charlist_text';      // QuickPasteが読み込んだ辞書（localStorage）
   const BOT_NAME = '指示清書';                            // プチボットの名前に含まれる文字
   const PLACEHOLDER = '（ここに作成指示を貼り付ける）';   // プチボットのプロンプトの目印
@@ -86,6 +88,27 @@
     #aib_h_polish { flex:1; background:rgb(205,43,90); border-color:#000; color:#fff; }
     #aib_h_polish:disabled { opacity:.5; }
     #aib_h_status { font-size:.8rem; color:#444; min-height:1.2em; }
+    #aib_helper input.aib_h_tap { cursor:pointer; caret-color:transparent; }
+    #aib_ed_overlay { position:fixed; inset:0; z-index:99995; background:rgba(0,0,0,.55); display:none; align-items:center; justify-content:center; padding:10px; box-sizing:border-box; }
+    #aib_ed_overlay.aib-open { display:flex; }
+    #aib_ed_box { width:min(560px,100%); height:min(92vh,760px); display:flex; flex-direction:column; gap:8px; padding:10px; box-sizing:border-box; background:#fff; color:#222; border-radius:12px; box-shadow:0 8px 32px rgba(0,0,0,.45); font-family:sans-serif; position:relative; }
+    #aib_ed_title, .aib_ed_hist_title { font-weight:700; font-size:.9rem; }
+    #aib_ed_text { flex:1.1; min-height:0; width:100%; box-sizing:border-box; resize:none; border:1px solid #999; border-radius:10px; padding:8px; font-size:16px; line-height:1.6; color:#222; background:#fffbe6; }
+    #aib_ed_tabs { display:flex; gap:8px; }
+    #aib_ed_tabs button { border:1px solid #888; border-radius:9px; background:#f2f2f2; color:#222; padding:8px 18px; font-size:15px; font-weight:700; cursor:pointer; }
+    #aib_ed_tabs button.aib-on { background:#2196f3; border-color:#1976d2; color:#fff; }
+    #aib_ed_bottom { flex:1; min-height:0; display:flex; gap:8px; }
+    #aib_ed_list { flex:1.4; min-width:0; overflow-y:auto; border:1px solid #999; border-radius:10px; padding:6px; display:flex; flex-direction:column; gap:6px; background:#fafafa; }
+    #aib_ed_list button { flex:none; text-align:left; border:1px solid #aaa; border-radius:8px; background:#fff; color:#222; padding:9px 10px; font-size:15px; cursor:pointer; }
+    #aib_ed_list .aib_h_none { color:#888; font-size:.8rem; padding:4px; }
+    #aib_ed_side { flex:1; display:flex; flex-direction:column; gap:8px; }
+    #aib_ed_side .aib_btn { padding:14px 8px; }
+    #aib_ed_send { background:rgb(205,43,90); border-color:#000; color:#fff; font-size:18px; }
+    #aib_ed_hist { position:absolute; inset:10px; background:#fff; border:1px solid #999; border-radius:10px; padding:8px; box-sizing:border-box; display:none; flex-direction:column; gap:6px; }
+    #aib_ed_hist.aib-open { display:flex; }
+    #aib_ed_hist_list { flex:1; min-height:0; overflow-y:auto; display:flex; flex-direction:column; gap:6px; }
+    #aib_ed_hist_list button { flex:none; text-align:left; border:1px solid #aaa; border-radius:8px; background:#fafafa; color:#222; padding:9px 10px; font-size:14px; line-height:1.5; cursor:pointer; white-space:pre-wrap; word-break:break-all; }
+    #aib_ed_hist_list .aib_h_none { color:#888; font-size:.8rem; padding:4px; }
   `;
   document.head.appendChild(style);
 
@@ -348,8 +371,8 @@
           <div id="aib_head"><span>清書補助</span><button type="button" id="aib_h_close">×</button></div>
           <div class="aib_h_row"><span class="aib_h_name">視点</span><select id="aib_h_pov"></select></div>
           <div class="aib_h_row"><span class="aib_h_name">主に喋る</span><div id="aib_h_speakers"></div></div>
-          <div class="aib_h_row"><span class="aib_h_name">冒頭はここから</span><input type="text" id="aib_h_start"></div>
-          <div class="aib_h_row"><span class="aib_h_name">最後はこの状態</span><input type="text" id="aib_h_end"></div>
+          <div class="aib_h_row"><span class="aib_h_name">冒頭はここから</span><input type="text" id="aib_h_start" class="aib_h_tap" readonly></div>
+          <div class="aib_h_row"><span class="aib_h_name">最後はこの状態</span><input type="text" id="aib_h_end" class="aib_h_tap" readonly></div>
           <div class="aib_h_row"><span class="aib_h_name">配分</span><select id="aib_h_ratio"></select></div>
           <div class="aib_h_row"><span class="aib_h_name">テンポ</span><select id="aib_h_tempo"></select></div>
           <div class="aib_h_row"><span class="aib_h_name">配分メモ</span><input type="text" id="aib_h_memo" placeholder="前半は〜、後半は〜"></div>
@@ -456,6 +479,151 @@
     });
     ['pov', 'start', 'end', 'ratio', 'tempo', 'memo', 'avoid', 'events'].forEach((k) => helperFields[k].addEventListener('change', saveHelper));
     helperFields.polish.addEventListener('click', polishToScene);
+    // 冒頭／最後の欄をタップすると専用画面を開く
+    helperFields.start.addEventListener('click', () => openEditor('start', '冒頭はここから'));
+    helperFields.end.addEventListener('click', () => openEditor('end', '最後はこの状態'));
+  }
+
+  /* ---------- 冒頭／最後の専用画面 ---------- */
+  let editor = null;
+  let editorKey = '';     // 'start' か 'end'
+  let editorTab = 'char'; // 'char'（人物）か 'term'（用語）
+
+  function loadEditHistory() {
+    try {
+      const v = GM_getValue(KEY_EDIT_HISTORY, {});
+      return v && typeof v === 'object' ? v : {};
+    } catch (_) { return {}; }
+  }
+  function pushEditHistory(key, text) {
+    const all = loadEditHistory();
+    const list = (Array.isArray(all[key]) ? all[key] : []).filter((t) => t !== text);
+    list.unshift(text);
+    all[key] = list.slice(0, EDIT_HISTORY_MAX);
+    try { GM_setValue(KEY_EDIT_HISTORY, all); } catch (_) {}
+  }
+
+  // QuickPasteの辞書を【キャラ】と【用語】に分けて読む（キャラは〈 〉の中の下の名前）
+  function loadDictionary() {
+    let text = '';
+    try { text = localStorage.getItem(KEY_CHARLIST) || ''; } catch (_) {}
+    const chars = [];
+    const terms = [];
+    let kind = '';
+    text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean).forEach((line) => {
+      const head = line.match(/^【([^】]*)】$/);
+      if (head) { kind = /キャラ|人物/.test(head[1]) ? 'char' : 'term'; return; }
+      const open = line.indexOf('(');
+      const close = line.lastIndexOf(')');
+      let name = open > 0 && close > open ? line.slice(0, open).trim() : line;
+      const desc = open > 0 && close > open ? line.slice(open + 1, close) : '';
+      const isChar = kind ? kind === 'char' : PERSON_RE.test(desc);
+      const short = name.match(/^(.*?)〈([^〉]*)〉\s*$/);
+      if (short) name = (short[2].trim() || short[1].trim());
+      if (!name) return;
+      const list = isChar ? chars : terms;
+      if (!list.includes(name)) list.push(name);
+    });
+    return { chars, terms };
+  }
+
+  function buildEditor() {
+    editor = document.createElement('div');
+    editor.id = 'aib_ed_overlay';
+    editor.innerHTML = `
+      <div id="aib_ed_box">
+        <div id="aib_ed_title"></div>
+        <textarea id="aib_ed_text"></textarea>
+        <div id="aib_ed_tabs">
+          <button type="button" data-tab="char">人物</button>
+          <button type="button" data-tab="term">用語</button>
+        </div>
+        <div id="aib_ed_bottom">
+          <div id="aib_ed_list"></div>
+          <div id="aib_ed_side">
+            <button type="button" class="aib_btn" id="aib_ed_hist_btn">履歴</button>
+            <button type="button" class="aib_btn" id="aib_ed_send">転送</button>
+            <button type="button" class="aib_btn" id="aib_ed_close">閉じる</button>
+          </div>
+        </div>
+        <div id="aib_ed_hist">
+          <div class="aib_ed_hist_title">履歴（タップで本文を置き換え）</div>
+          <div id="aib_ed_hist_list"></div>
+        </div>
+      </div>`;
+    document.body.appendChild(editor);
+
+    const text = editor.querySelector('#aib_ed_text');
+    const hist = editor.querySelector('#aib_ed_hist');
+
+    // 画面の外（暗いところ）をタップしたら閉じる
+    editor.addEventListener('click', (e) => { if (e.target === editor) closeEditor(); });
+    editor.querySelector('#aib_ed_close').addEventListener('click', closeEditor);
+
+    editor.querySelector('#aib_ed_tabs').addEventListener('click', (e) => {
+      const b = e.target.closest('button[data-tab]');
+      if (!b) return;
+      editorTab = b.dataset.tab;
+      renderEditorList();
+    });
+
+    // 名前をタップしたら本文の最後に足す
+    editor.querySelector('#aib_ed_list').addEventListener('click', (e) => {
+      const b = e.target.closest('button[data-name]');
+      if (!b) return;
+      text.value += b.dataset.name;
+    });
+
+    editor.querySelector('#aib_ed_hist_btn').addEventListener('click', () => {
+      if (hist.classList.contains('aib-open')) { hist.classList.remove('aib-open'); return; }
+      const list = loadEditHistory()[editorKey];
+      const items = Array.isArray(list) ? list : [];
+      editor.querySelector('#aib_ed_hist_list').innerHTML = items.length
+        ? items.map((t, i) => '<button type="button" data-i="' + i + '">' + escapeHtml(t) + '</button>').join('')
+        : '<span class="aib_h_none">まだ履歴がないよ</span>';
+      hist.classList.add('aib-open');
+    });
+    editor.querySelector('#aib_ed_hist_list').addEventListener('click', (e) => {
+      const b = e.target.closest('button[data-i]');
+      if (b) {
+        const list = loadEditHistory()[editorKey] || [];
+        const t = list[Number(b.dataset.i)];
+        if (typeof t === 'string') text.value = t;
+      }
+      hist.classList.remove('aib-open');
+    });
+
+    editor.querySelector('#aib_ed_send').addEventListener('click', () => {
+      const v = text.value.trim();
+      helperFields[editorKey].value = v;
+      if (v) pushEditHistory(editorKey, v);
+      saveHelper();
+      closeEditor();
+    });
+  }
+
+  function renderEditorList() {
+    const dict = loadDictionary();
+    const names = editorTab === 'char' ? dict.chars : dict.terms;
+    editor.querySelectorAll('#aib_ed_tabs button').forEach((b) => b.classList.toggle('aib-on', b.dataset.tab === editorTab));
+    editor.querySelector('#aib_ed_list').innerHTML = names.length
+      ? names.map((n) => '<button type="button" data-name="' + escapeHtml(n).replace(/"/g, '&quot;') + '">' + escapeHtml(n) + '</button>').join('')
+      : '<span class="aib_h_none">' + (editorTab === 'char' ? '人物' : '用語') + 'がないよ（QuickPasteの辞書を読み込んでね）</span>';
+  }
+
+  function openEditor(key, title) {
+    if (!editor) buildEditor();
+    editorKey = key;
+    editorTab = 'char';
+    editor.querySelector('#aib_ed_title').textContent = title;
+    editor.querySelector('#aib_ed_text').value = helperFields[key].value;
+    editor.querySelector('#aib_ed_hist').classList.remove('aib-open');
+    renderEditorList();
+    editor.classList.add('aib-open');
+  }
+
+  function closeEditor() {
+    if (editor) editor.classList.remove('aib-open');
   }
 
   /* ---------- 清書補助 ---------- */
