@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         AIのべりすと キャラ画像
 // @namespace    yuuki490-ainovel
-// @version      2.0
-// @description  縦書き表示のパネルで、セリフの頭にキャラの顔画像を表示し、括弧の前の名前は画像の上に移す。洗脳中のキャラは「名前_洗脳」の画像に差し替える。名前の後ろに「（ast）」のように作品コード（アルファベット3文字）を付けた画像は、設定で入れたコードと合うときだけ表示する。画像の登録は画面の仮ボタン（顔）から。前のキャラ画像スクリプトで登録した画像と対応表をそのまま使う
+// @version      2.1
+// @description  縦書き表示のパネルで、セリフの頭にキャラの顔画像を表示し、括弧の前の名前は画像の上に移す。洗脳中のキャラは「名前_洗脳」の画像に差し替える。作品ごとの対応表をテキストファイル（作品名.txt に「名前=画像ファイル名」）で読み込み、作品を選ぶとその対応表を優先して使う。名前の後ろに「（ast）」のように作品コード（アルファベット3文字）を付けた画像は、設定で入れたコードと合うときだけ表示する。画像の登録は画面の仮ボタン（顔）から。前のキャラ画像スクリプトで登録した画像と対応表をそのまま使う
 // @match        https://ai-novel.com/*
 // @grant        none
 // @run-at       document-idle
@@ -20,6 +20,8 @@
   const KEY_DISPLAY = 'ainovel_character_image_display_settings'; // { iconSize, iconGap }
   const KEY_BRAINWASH = 'ainovel_brainwash_states';             // 名前=状態
   const KEY_WORK = 'ainovel_character_image_work';               // 作品コード（アルファベット3文字）
+  const KEY_WORK_MAPS = 'ainovel_character_image_work_maps';     // { 作品名: { 名前: ファイル名 } }（テキストファイルから読み込んだもの）
+  const KEY_WORK_SELECTED = 'ainovel_character_image_work_selected'; // 今使う作品名（空なら作品の対応表は使わない）
 
   const BRAINWASH_SUFFIX = '_洗脳';
   const DEFAULT_SIZE = 32;
@@ -85,6 +87,18 @@
   let iconSize = DEFAULT_SIZE;
   let iconGap = DEFAULT_GAP;
   let workCode = '';
+  let workMaps = {};       // 作品名ごとの対応表
+  let selectedWork = '';   // 今使う作品名
+
+  function loadWorkMaps() {
+    const m = loadJson(KEY_WORK_MAPS, {});
+    workMaps = m && typeof m === 'object' ? m : {};
+    let v = '';
+    try { v = localStorage.getItem(KEY_WORK_SELECTED) || ''; } catch (_) {}
+    selectedWork = workMaps[v] ? v : '';
+  }
+  // 今選んでいる作品の対応表（作品を選んでいなければ空）
+  const currentWorkMap = () => (selectedWork && workMaps[selectedWork]) || {};
 
   function loadWork() {
     let v = '';
@@ -201,9 +215,10 @@
   const visibleTag = (tag) => !workCode || !tag || tag === workCode;
 
   // 対応表から、セリフの名前に合う名前を探す（完全一致を優先、なければ一部一致で一番長いもの）
+  // 選んでいる作品の対応表を先に探して、なければいつもの対応表から探す
   // 同じ名前にコード付きとコードなしの両方があるときは、コードが合うほうを優先する
-  function findKey(name) {
-    const entries = Object.keys(characterMap).map((k) => ({ key: k, ...splitKey(k) })).filter((e) => !e.bw && visibleTag(e.tag));
+  function findIn(map, name) {
+    const entries = Object.keys(map).map((k) => ({ key: k, ...splitKey(k) })).filter((e) => !e.bw && visibleTag(e.tag));
     const prefer = (list) => list.find((e) => e.tag) || list[0];
     const exact = entries.filter((e) => normalizeName(e.name) === normalizeName(name));
     if (exact.length) return prefer(exact).key;
@@ -213,16 +228,25 @@
     return prefer(hits.filter((e) => normalizeName(e.name) === normalizeName(longest.name))).key;
   }
 
+  function findKey(name) {
+    const work = currentWorkMap();
+    const wk = findIn(work, name);
+    if (wk) return { key: wk, map: work };
+    const ck = findIn(characterMap, name);
+    return ck ? { key: ck, map: characterMap } : null;
+  }
+
   function resolveFilename(name) {
-    const key = findKey(name);
-    if (!key) return null;
+    const found = findKey(name);
+    if (!found) return null;
+    const { key, map } = found;
     const keyName = splitKey(key).name;
-    const bw = characterMap[key + BRAINWASH_SUFFIX];
+    const bw = map[key + BRAINWASH_SUFFIX];
     // 洗脳状態一覧はフルネーム、セリフは下の名前（1文字のこともある）なので、フルネームの終わりが一致すれば同じ人とみなす
     const matches = (n) => sameName(n, keyName) || sameName(n, name) ||
       normalizeName(n).endsWith(normalizeName(keyName)) || normalizeName(n).endsWith(normalizeName(name));
     if (bw && brainwashed.some(matches)) return bw;
-    return characterMap[key];
+    return map[key];
   }
 
   // 行の頭の「名前「」から名前を取り出す
@@ -395,7 +419,10 @@
     list.innerHTML = '';
     const files = ((await listImages().catch(() => [])) || []).map(String).sort();
     const used = new Set(Object.values(characterMap));
-    const missing = [...used].filter((f) => !files.includes(f));
+    Object.values(workMaps).forEach((m) => Object.values(m || {}).forEach((f) => used.add(f)));
+    // 足りない画像は、いつもの対応表と今選んでいる作品の対応表だけで調べる
+    const checkFiles = new Set([...Object.values(characterMap), ...Object.values(currentWorkMap())]);
+    const missing = [...checkFiles].filter((f) => !files.includes(f));
     if (!files.length) list.innerHTML = '<div class="cs-item">登録されている画像はまだないよ</div>';
     for (const f of files) {
       const item = document.createElement('div');
@@ -420,11 +447,18 @@
     loadMap();
     loadDisplay();
     loadWork();
+    loadWorkMaps();
     const overlay = document.createElement('div');
     overlay.id = SETTINGS_ID;
     overlay.innerHTML = `
       <div class="cs-box">
         <div class="cs-head"><span>キャラ画像の設定</span><button type="button" class="cs-close">×</button></div>
+        <div class="cs-label">作品の対応表（テキストファイルの名前が作品名になるよ。中身は1行に「名前=画像ファイル名」。同じ名前のファイルを読み込むと上書き）</div>
+        <div class="cs-row">
+          <select class="cs-worksel" style="flex:1;min-width:0;font-size:15px;padding:6px;border:1px solid #999;border-radius:8px;"></select>
+          <label class="cs-btn cs-pick">📄 テキストを読み込む<input type="file" multiple class="cs-txt"></label>
+        </div>
+        <textarea class="cs-workview" readonly style="min-height:90px;background:#f7f7f7;"></textarea>
         <div class="cs-row">
           <span class="cs-label">作品コード（アルファベット3文字）</span><input type="text" class="cs-work" maxlength="3" placeholder="ast" style="width:4em;font-size:15px;padding:4px;">
           <span class="cs-label">名前に「（ast）」のように付けた画像は、このコードと合うときだけ出すよ。空なら全部出す</span>
@@ -433,7 +467,7 @@
         <div class="cs-row"><label class="cs-btn cs-pick">🖼 画像を選ぶ<input type="file" multiple class="cs-file"></label></div>
         <div class="cs-pending"></div>
         <div class="cs-row cs-regrow" style="display:none"><button type="button" class="cs-btn cs-reg">この名前で登録</button></div>
-        <div class="cs-label">対応表（1行に「名前=画像ファイル名」。洗脳中の画像は「名前_洗脳=ファイル名」、作品ごとなら「みお（ast）=みお（ast）.png」）</div>
+        <div class="cs-label">いつもの対応表（どの作品でも使う。作品の対応表に同じ名前があるときは作品のほうが優先。1行に「名前=画像ファイル名」。洗脳中の画像は「名前_洗脳=ファイル名」、作品ごとなら「みお（ast）=みお（ast）.png」）</div>
         <textarea class="cs-map" placeholder="焔=homura.png&#10;焔_洗脳=homura_bw.png&#10;みお（ast）=みお（ast）.png&#10;みお（ast）_洗脳=みお（ast）_洗脳.png"></textarea>
         <div class="cs-row">
           <span class="cs-label">顔の大きさ</span><input type="number" class="cs-size" min="20" max="120"><span class="cs-label">px</span>
@@ -456,6 +490,85 @@
     sizeField.value = iconSize;
     gapField.value = iconGap;
     workField.value = workCode;
+
+    // 作品の対応表：選ぶとすぐ切り替わる
+    const workSel = box.querySelector('.cs-worksel');
+    const workView = box.querySelector('.cs-workview');
+    function renderWorks() {
+      const names = Object.keys(workMaps).sort((a, b) => a.localeCompare(b, 'ja'));
+      workSel.innerHTML = '';
+      const none = document.createElement('option');
+      none.value = '';
+      none.textContent = '（作品を使わない）';
+      workSel.appendChild(none);
+      names.forEach((n) => {
+        const o = document.createElement('option');
+        o.value = n;
+        o.textContent = n + '（' + Object.keys(workMaps[n] || {}).length + '件）';
+        workSel.appendChild(o);
+      });
+      workSel.value = selectedWork;
+      const m = currentWorkMap();
+      workView.value = Object.entries(m).map(([k, v]) => k + '=' + v).join('\n');
+      workView.placeholder = selectedWork ? 'この作品の対応表は空だよ' : '作品を選ぶと、ここに中身が出るよ';
+    }
+    renderWorks();
+
+    workSel.addEventListener('change', () => {
+      selectedWork = workMaps[workSel.value] ? workSel.value : '';
+      try { localStorage.setItem(KEY_WORK_SELECTED, selectedWork); } catch (_) {}
+      renderWorks();
+      renderList(box);
+      refreshAll();
+      result.className = 'cs-msg cs-result cs-ok';
+      result.textContent = selectedWork ? '作品「' + selectedWork + '」の対応表を使うよ' : '作品の対応表は使わないよ';
+    });
+
+    // テキストファイルを読む（文字化けしたらShift_JISで読み直す）
+    function readText(file, enc) {
+      return new Promise((resolve, reject) => {
+        const r = new FileReader();
+        r.onload = () => resolve(String(r.result || ''));
+        r.onerror = () => reject(r.error);
+        r.readAsText(file, enc);
+      });
+    }
+    async function readTextAuto(file) {
+      const t = await readText(file, 'utf-8');
+      if (!t.includes('�')) return t.replace(/^﻿/, '');
+      try { return await readText(file, 'shift_jis'); } catch (_) { return t; }
+    }
+
+    // accept を付けるとスマホで「参照」が出ないことがあるので、何でも選べる画面にしてテキスト以外はここで外す
+    box.querySelector('.cs-txt').addEventListener('change', async (e) => {
+      const all = Array.from(e.target.files || []);
+      const files = all.filter((f) => /\.txt$/i.test(f.name) || f.type === 'text/plain');
+      e.target.value = '';
+      const msgs = [];
+      let last = '';
+      for (const f of files) {
+        const work = f.name.replace(/\.[^.]+$/, '').trim();
+        if (!work) continue;
+        const text = await readTextAuto(f).catch(() => null);
+        if (text == null) { msgs.push(f.name + '：読み込めなかったよ'); continue; }
+        const { result: map, errors } = parseMapping(text);
+        if (!Object.keys(map).length) { msgs.push(f.name + '：「名前=画像ファイル名」の行がなかったよ'); continue; }
+        workMaps[work] = map;
+        last = work;
+        msgs.push('「' + work + '」' + Object.keys(map).length + '件を読み込んだよ' + (errors.length ? '（読めなかった行：\n' + errors.join('\n') + '）' : ''));
+      }
+      if (all.length > files.length) msgs.push('テキストじゃないファイルが' + (all.length - files.length) + '個あったので外したよ');
+      if (last) {
+        saveJson(KEY_WORK_MAPS, workMaps);
+        selectedWork = last;
+        try { localStorage.setItem(KEY_WORK_SELECTED, selectedWork); } catch (_) {}
+        renderWorks();
+        renderList(box);
+        refreshAll();
+      }
+      result.className = 'cs-msg cs-result' + (last ? ' cs-ok' : '');
+      result.textContent = msgs.join('\n');
+    });
 
     // 選んだ画像を一覧に出して、画像ごとにキャラの名前を入れてもらう
     // （スマホだとファイル名が数字になるので、入れた名前で保存して対応表にも足す）
@@ -572,6 +685,7 @@
   loadMap();
   loadDisplay();
   loadWork();
+  loadWorkMaps();
   refreshStates();
   openDb().catch((e) => console.warn('[キャラ画像]', e)).then(() => applyFaces());
 
