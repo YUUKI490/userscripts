@@ -1,6 +1,6 @@
 # AIのべりすと ユーザースクリプト 引き継ぎメモ（刷新後）
 
-2026-10-11 更新。新しいチャットで続きを始めるときに最初に読むメモ。
+2026-11-15 更新。新しいチャットで続きを始めるときに最初に読むメモ。
 刷新前の控えと、刷新を始めたときのメモは `ainovel-before-renewal/`（その中の `HANDOFF.md`）にある。
 
 ## 作業のルール
@@ -22,7 +22,7 @@
 | 生成後の自動処理 | ainovel-after-generate.user.js | 1.5 | 生成完了を見張る。途中切れ（最後が句読点・記号でない、または「」『』（）が閉じていない）なら「続ける」を押す（最初の生成も含めて2回まで。2回目でも切れていたら最後の行を消す）。脚注の処理は1.5で「脚注まとめ」に分離した。`body[data-ainovel-footnote-busy]` が付いている間（脚注まとめがプチボットを動かしている間）は生成完了を無視する |
 | 脚注まとめ | ainovel-footnote.user.js | 1.0 | 仮ボタン「注」で「脚注まとめ係」のプチボットを実行し、脚注を差し替え、洗脳状態を保存。脚注欄の下に「↩ 脚注を戻す」。実行中は `body` に `data-ainovel-footnote-busy` を付ける（1.4までの生成後の自動処理から脚注の処理をそのまま移したもの） |
 | 縦書き表示 | ainovel-tategaki.user.js | 1.3 | 仮ボタン「縦」で本文を縦書きパネルにかぶせ表示（ユーザーのブロックは表示しない）。生成で自動更新、最新（左端）に追従。パネルの「✍ 入力」でAIブロック追加のパネルを開く。⚙で文字の大きさ（12〜36px）と行間（1.2〜3.0）。鈎括弧で始まる行（名前＋括弧も）は `.tg-hang` を付け、折り返した列を括弧1文字分下げる（`--tg-hang:1em` ＋ `padding-top` ＋ マイナスの `text-indent`） |
-| キャラ画像 | ainovel-char-image.user.js | 1.6 | 縦書きパネルのセリフの頭に顔画像。括弧の前の名前は画像の上へ移す。洗脳中は「名前_洗脳」の画像。仮ボタン「顔」で登録画面（画像を選んで名前を入れて登録→対応表にも自動で追加）。行の `padding-top` に縦書き表示の `--tg-hang` を足して、顔とぶら下げが重ならないようにしている |
+| キャラ画像 | ainovel-char-image.user.js | 2.1 | 縦書きパネルのセリフの頭に顔画像。括弧の前の名前は画像の上へ移す。洗脳中は「名前_洗脳」の画像。仮ボタン「顔」で登録画面（画像を選んで名前を入れて登録→いつもの対応表にも自動で追加）。行の `padding-top` に縦書き表示の `--tg-hang` を足して、顔とぶら下げが重ならないようにしている。2.0：名前に「（ast）」のように作品コード（アルファベット3文字）を付けた画像は、設定のコードと合うときだけ出す。2.1：作品ごとの対応表をテキストファイル（ファイル名＝作品名、中身は1行に「名前=画像ファイル名」）で読み込み、プルダウンで作品を選ぶ。選んだ作品の対応表を先に探し、なければいつもの対応表から探す。同じ名前のファイルを読み込むと上書き。文字化けしたらShift_JISで読み直す |
 | 3章まとめ | ainovel-chapter-summary.user.js | 1.4 | 仮ボタン「章」。本文の「第〇章」から最新章を出し、直近3章の脚注作成プロンプトを指示欄に入れて「続ける」を押す。生成されたAIブロックを読んで確認画面（脚注は直してからOKできる）→ 脚注を差し替え（あらすじは外す、場面は差し替え、同じ名前の人物は差し替え、新しい人物は追加）→ AIブロックと指示ブロックを削除。あらすじ・汚染一覧・反映前の脚注（3回分）はGM_setValueに作品名ごと保存（`ainovel_chapter_synopsis:` `ainovel_chapter_states:` `ainovel_chapter_an_history:`）。汚染一覧は `ainovel_brainwash_states` にも写す。決まった状態は「判断できない」で上書きしない。実行中は `data-ainovel-footnote-busy` を付ける。章ボタン長押しでプロンプト（先頭の下の部分）を作品ごとに編集（`ainovel_chapter_prompt:作品名`）。テンプレは `ainovel-template/3章まとめ プロンプト作成テンプレート.txt` |
 
 - 刷新前の「途中切れ自動続行」（ainovel-auto-continue.user.js）は「生成後の自動処理」に入ったので使わない。
@@ -33,7 +33,7 @@
 
 - 縦書き表示の「✍ 入力」は、AIブロック追加の仮ボタン（`#ainovel-add-ai-block-btn`）を代わりに押している。
 - キャラ画像は、縦書き表示のパネル（`#ainovel-tategaki-scroller`）の中の `.tg-line` を見て顔を入れる。縦書き表示が本文を作り直すと入れ直す。
-- キャラ画像の保存場所は刷新前と同じ（IndexedDB `ainovel_character_image_db` の `images`、対応表は localStorage `ainovel_character_image_map`、大きさは `ainovel_character_image_display_settings`）。
+- キャラ画像の保存場所は刷新前と同じ（IndexedDB `ainovel_character_image_db` の `images`、対応表は localStorage `ainovel_character_image_map`、大きさは `ainovel_character_image_display_settings`）。作品コードは `ainovel_character_image_work`、作品ごとの対応表は `ainovel_character_image_work_maps`（`{作品名:{名前:ファイル名}}`）、選んでいる作品名は `ainovel_character_image_work_selected`。
 - 洗脳状態一覧（localStorage `ainovel_brainwash_states`、`名前=状態` を1行ずつ）は、脚注まとめが書き、QuickPasteとキャラ画像が読む。作品ごとの控えは `ainovel_brainwash_states:作品名`。状態に「なし」が入っていれば洗脳されていない扱い（キャラ画像は「判断できない」も洗脳なし扱い）。
 - 名前の照らし合わせ：空白を無視、2文字以上で片方がもう片方を含めば同じ人。洗脳状態の保存ではキャラクターブックのタグ（`input.witags`）でフルネームに直す。キャラ画像はフルネームの終わりがセリフの名前と一致すれば同じ人。
 
